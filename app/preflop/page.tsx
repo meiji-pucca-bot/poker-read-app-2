@@ -532,7 +532,52 @@ export default function PreflopPage() {
       );
       return;
     }
+    // 自分以外がフォールド以外の行動をした場合、
+    // 入力されたスタックで相手情報を自動登録・更新します。
+    if (
+      activePosition !== heroPosition &&
+      selectedAction !== "Fold"
+    ) {
+      const stackNumber = Number(villainStackInput);
 
+      if (
+        !villainStackInput ||
+        !Number.isFinite(stackNumber) ||
+        stackNumber <= 0
+      ) {
+        setMessage(
+          `${activePosition}のスタックを入力してください。入力後、そのままアクションを追加すると相手として自動登録されます。`,
+        );
+        return;
+      }
+
+      setVillains((current) => {
+        const existing = current.find(
+          (villain) =>
+            villain.position === activePosition,
+        );
+
+        if (existing) {
+          return current.map((villain) =>
+            villain.position === activePosition
+              ? {
+                  ...villain,
+                  stack: villainStackInput,
+                }
+              : villain,
+          );
+        }
+
+        return [
+          ...current,
+          {
+            id: crypto.randomUUID(),
+            position: activePosition,
+            stack: villainStackInput,
+          },
+        ];
+      });
+    }
     if (
       selectedOption?.needsAmount &&
       !amount
@@ -777,9 +822,45 @@ export default function PreflopPage() {
       return;
     }
 
-    if (villains.length === 0) {
+    const opponentPositions = Array.from(
+      new Set(
+        actions
+          .filter(
+            (action) =>
+              action.position !== heroPosition &&
+              action.action !== "Fold",
+          )
+          .map((action) => action.position),
+      ),
+    );
+
+    if (opponentPositions.length === 0) {
       setMessage(
-        "対戦した相手を1人以上登録してください。",
+        "対戦した相手のアクションを入力してください。",
+      );
+      return;
+    }
+
+    const participatingVillains = villains.filter(
+      (villain) =>
+        opponentPositions.includes(villain.position),
+    );
+
+    const missingVillainPositions =
+      opponentPositions.filter(
+        (position) =>
+          !participatingVillains.some(
+            (villain) =>
+              villain.position === position &&
+              Number(villain.stack) > 0,
+          ),
+      );
+
+    if (missingVillainPositions.length > 0) {
+      setMessage(
+        `${missingVillainPositions.join(
+          "、",
+        )}のスタックを入力して、該当するアクションをもう一度追加してください。`,
       );
       return;
     }
@@ -792,7 +873,7 @@ export default function PreflopPage() {
         contributions:
           preflopState.contributions,
         heroPosition,
-        villains,
+        villains: participatingVillains,
         savedAt: new Date().toISOString(),
       }),
     );
@@ -802,8 +883,8 @@ export default function PreflopPage() {
       JSON.stringify({
         heroPosition,
         villainPosition:
-          villains[0]?.position ?? "",
-        villains,
+          participatingVillains[0]?.position ?? "",
+        villains: participatingVillains,
         savedAt: new Date().toISOString(),
       }),
     );
