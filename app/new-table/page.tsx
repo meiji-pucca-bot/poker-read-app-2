@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 type TableDraft = {
   venue: string;
@@ -9,7 +10,12 @@ type TableDraft = {
   smallBlind: string;
   bigBlind: string;
   heroStack: string;
-  villainStack: string;
+};
+
+type SavedTable = TableDraft & {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 const emptyDraft: TableDraft = {
@@ -18,58 +24,77 @@ const emptyDraft: TableDraft = {
   smallBlind: "",
   bigBlind: "",
   heroStack: "",
-  villainStack: "",
 };
 
-function formatNumber(value: string) {
+const draftStorageKey = "poker-read-table-draft";
+const currentTableStorageKey = "poker-read-current-table";
+const tableHistoryStorageKey = "poker-read-tables";
+
+function formatNumber(value: string | number) {
   const number = Number(value);
 
-  if (!value || !Number.isFinite(number)) {
-    return "";
+  if (!Number.isFinite(number)) {
+    return String(value);
   }
 
   return number.toLocaleString("ja-JP");
 }
 
-function convertToBb(amount: string, bigBlind: string) {
-  const amountNumber = Number(amount);
-  const bbNumber = Number(bigBlind);
+function calculateBb(value: string, bigBlind: string) {
+  const amount = Number(value);
+  const bb = Number(bigBlind);
 
   if (
-    !amount ||
+    !value ||
     !bigBlind ||
-    !Number.isFinite(amountNumber) ||
-    !Number.isFinite(bbNumber) ||
-    bbNumber <= 0
+    !Number.isFinite(amount) ||
+    !Number.isFinite(bb) ||
+    bb <= 0
   ) {
     return null;
   }
 
-  return amountNumber / bbNumber;
+  return amount / bb;
 }
 
-function formatBb(value: number | null) {
-  if (value === null) {
-    return "BBを入力すると自動計算されます";
+function readSavedTables(): SavedTable[] {
+  const saved = localStorage.getItem(tableHistoryStorageKey);
+
+  if (!saved) {
+    return [];
   }
 
-  return `${Number(value.toFixed(2))}bb`;
+  try {
+    const parsed = JSON.parse(saved);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 export default function NewTablePage() {
+  const router = useRouter();
+
   const [draft, setDraft] = useState<TableDraft>(emptyDraft);
-  const [loaded, setLoaded] = useState(false);
   const [message, setMessage] = useState("");
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    const savedDraft = localStorage.getItem("poker-read-table-draft");
+    const savedDraft = localStorage.getItem(draftStorageKey);
 
     if (savedDraft) {
       try {
-        const parsedDraft = JSON.parse(savedDraft) as TableDraft;
-        setDraft(parsedDraft);
+        const parsed = JSON.parse(savedDraft) as Partial<TableDraft>;
+
+        setDraft({
+          venue: parsed.venue ?? "",
+          tableName: parsed.tableName ?? "",
+          smallBlind: parsed.smallBlind ?? "",
+          bigBlind: parsed.bigBlind ?? "",
+          heroStack: parsed.heroStack ?? "",
+        });
       } catch {
-        localStorage.removeItem("poker-read-table-draft");
+        localStorage.removeItem(draftStorageKey);
       }
     }
 
@@ -82,45 +107,20 @@ export default function NewTablePage() {
     }
 
     localStorage.setItem(
-      "poker-read-table-draft",
+      draftStorageKey,
       JSON.stringify(draft),
     );
   }, [draft, loaded]);
 
-  const heroStackBb = convertToBb(
-    draft.heroStack,
-    draft.bigBlind,
+  const heroStackBb = useMemo(
+    () => calculateBb(draft.heroStack, draft.bigBlind),
+    [draft.heroStack, draft.bigBlind],
   );
-
-  const villainStackBb = convertToBb(
-    draft.villainStack,
-    draft.bigBlind,
-  );
-
-  const effectiveStack =
-    heroStackBb !== null && villainStackBb !== null
-      ? Math.min(heroStackBb, villainStackBb)
-      : null;
 
   function updateField(
     field: keyof TableDraft,
     value: string,
   ) {
-    const numericFields: Array<keyof TableDraft> = [
-      "smallBlind",
-      "bigBlind",
-      "heroStack",
-      "villainStack",
-    ];
-
-    if (
-      numericFields.includes(field) &&
-      value !== "" &&
-      !/^\d*$/.test(value)
-    ) {
-      return;
-    }
-
     setDraft((current) => ({
       ...current,
       [field]: value,
@@ -129,9 +129,21 @@ export default function NewTablePage() {
     setMessage("");
   }
 
+  function updateNumberField(
+    field:
+      | "smallBlind"
+      | "bigBlind"
+      | "heroStack",
+    value: string,
+  ) {
+    if (value === "" || /^\d*$/.test(value)) {
+      updateField(field, value);
+    }
+  }
+
   function clearDraft() {
     setDraft(emptyDraft);
-    localStorage.removeItem("poker-read-table-draft");
+    localStorage.removeItem(draftStorageKey);
     setMessage("入力内容をクリアしました。");
   }
 
@@ -141,42 +153,69 @@ export default function NewTablePage() {
       return;
     }
 
+    const smallBlind = Number(draft.smallBlind);
+    const bigBlind = Number(draft.bigBlind);
+
     if (
       !draft.smallBlind ||
       !draft.bigBlind ||
-      Number(draft.bigBlind) <= 0
+      !Number.isFinite(smallBlind) ||
+      !Number.isFinite(bigBlind) ||
+      smallBlind <= 0 ||
+      bigBlind <= 0
     ) {
       setMessage("SBとBBを正しく入力してください。");
       return;
     }
 
-    if (!draft.heroStack || !draft.villainStack) {
-      setMessage(
-        "自分と相手のスタックを入力してください。",
-      );
+    if (smallBlind >= bigBlind) {
+      setMessage("SBはBBより小さい金額にしてください。");
       return;
     }
 
-    const table = {
+    const heroStack = Number(draft.heroStack);
+
+    if (
+      !draft.heroStack ||
+      !Number.isFinite(heroStack) ||
+      heroStack <= 0
+    ) {
+      setMessage("自分のスタックを入力してください。");
+      return;
+    }
+
+    const now = new Date().toISOString();
+
+    const table: SavedTable = {
       id: crypto.randomUUID(),
-      ...draft,
-      createdAt: new Date().toISOString(),
+      venue: draft.venue.trim(),
+      tableName: draft.tableName.trim(),
+      smallBlind: draft.smallBlind,
+      bigBlind: draft.bigBlind,
+      heroStack: draft.heroStack,
+      createdAt: now,
+      updatedAt: now,
     };
 
     localStorage.setItem(
-      "poker-read-current-table",
+      currentTableStorageKey,
       JSON.stringify(table),
     );
 
-    localStorage.removeItem("poker-read-table-draft");
+    const previousTables = readSavedTables();
 
-    setMessage(
-      "テーブル情報を保存しました。次はポジション入力画面を作ります。",
+    localStorage.setItem(
+      tableHistoryStorageKey,
+      JSON.stringify([table, ...previousTables]),
     );
+
+    localStorage.removeItem(draftStorageKey);
+
+    router.push("/hero-hand");
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 p-4 text-white">
+    <main className="min-h-screen bg-slate-950 px-4 py-6 text-white">
       <div className="mx-auto max-w-md">
         <header className="mb-6">
           <Link
@@ -208,30 +247,31 @@ export default function NewTablePage() {
           <div>
             <label
               htmlFor="venue"
-              className="mb-2 block font-bold"
+              className="block text-lg font-bold"
             >
               開催場所
             </label>
 
-            <p className="mb-2 text-sm text-slate-400">
+            <p className="mt-1 text-sm text-slate-400">
               店舗名、友人宅、オンラインなど
             </p>
 
             <input
               id="venue"
+              type="text"
               value={draft.venue}
               onChange={(event) =>
                 updateField("venue", event.target.value)
               }
-              placeholder="例：新宿ポーカールーム"
-              className="w-full rounded-xl border border-slate-700 bg-slate-950 p-4 outline-none focus:border-emerald-500"
+              placeholder="例：バッドビート"
+              className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-lg outline-none focus:border-emerald-500"
             />
           </div>
 
           <div>
             <label
               htmlFor="tableName"
-              className="mb-2 block font-bold"
+              className="block text-lg font-bold"
             >
               テーブル名・番号
               <span className="ml-2 text-sm font-normal text-slate-400">
@@ -241,76 +281,86 @@ export default function NewTablePage() {
 
             <input
               id="tableName"
+              type="text"
               value={draft.tableName}
               onChange={(event) =>
                 updateField("tableName", event.target.value)
               }
-              placeholder="例：3番テーブル"
-              className="w-full rounded-xl border border-slate-700 bg-slate-950 p-4 outline-none focus:border-emerald-500"
+              placeholder="例：8番テーブル"
+              className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-lg outline-none focus:border-emerald-500"
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label
-                htmlFor="smallBlind"
-                className="mb-2 block font-bold"
-              >
-                SB
-              </label>
+          <div>
+            <h2 className="text-lg font-bold">
+              ブラインド
+            </h2>
 
-              <input
-                id="smallBlind"
-                inputMode="numeric"
-                value={draft.smallBlind}
-                onChange={(event) =>
-                  updateField(
-                    "smallBlind",
-                    event.target.value,
-                  )
-                }
-                placeholder="50"
-                className="w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-xl font-bold outline-none focus:border-emerald-500"
-              />
-            </div>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div>
+                <label
+                  htmlFor="smallBlind"
+                  className="block font-bold"
+                >
+                  SB
+                </label>
 
-            <div>
-              <label
-                htmlFor="bigBlind"
-                className="mb-2 block font-bold"
-              >
-                BB
-              </label>
+                <input
+                  id="smallBlind"
+                  inputMode="numeric"
+                  value={draft.smallBlind}
+                  onChange={(event) =>
+                    updateNumberField(
+                      "smallBlind",
+                      event.target.value,
+                    )
+                  }
+                  placeholder="500"
+                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-xl font-bold outline-none focus:border-emerald-500"
+                />
+              </div>
 
-              <input
-                id="bigBlind"
-                inputMode="numeric"
-                value={draft.bigBlind}
-                onChange={(event) =>
-                  updateField(
-                    "bigBlind",
-                    event.target.value,
-                  )
-                }
-                placeholder="100"
-                className="w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-xl font-bold outline-none focus:border-emerald-500"
-              />
+              <div>
+                <label
+                  htmlFor="bigBlind"
+                  className="block font-bold"
+                >
+                  BB
+                </label>
+
+                <input
+                  id="bigBlind"
+                  inputMode="numeric"
+                  value={draft.bigBlind}
+                  onChange={(event) =>
+                    updateNumberField(
+                      "bigBlind",
+                      event.target.value,
+                    )
+                  }
+                  placeholder="1000"
+                  className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-xl font-bold outline-none focus:border-emerald-500"
+                />
+              </div>
             </div>
           </div>
 
-          <div className="border-t border-slate-800 pt-5">
-            <label
-              htmlFor="heroStack"
-              className="mb-2 block font-bold"
-            >
-              自分のスタック
-              <span className="ml-2 text-sm font-normal text-slate-400">
-                Hero（自分）
-              </span>
-            </label>
+          <div>
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+  <label
+    htmlFor="heroStack"
+    className="text-lg font-bold"
+  >
+    自分のスタック
+  </label>
 
-            <p className="mb-2 text-sm text-slate-400">
-              正確でなくても、現在のおおよその金額でOKです
+  <span className="text-sm font-normal text-emerald-300">
+    Hero（自分）
+  </span>
+</div>
+
+            <p className="mt-1 text-sm leading-6 text-slate-400">
+              正確でなくても、現在のおおよその金額でOKです。
             </p>
 
             <input
@@ -318,76 +368,87 @@ export default function NewTablePage() {
               inputMode="numeric"
               value={draft.heroStack}
               onChange={(event) =>
-                updateField(
+                updateNumberField(
                   "heroStack",
                   event.target.value,
                 )
               }
-              placeholder="10000"
-              className="w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-xl font-bold outline-none focus:border-emerald-500"
+              placeholder="例：65000"
+              className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-xl font-bold outline-none focus:border-emerald-500"
             />
 
-            <p className="mt-2 text-sm font-semibold text-emerald-400">
-              {draft.heroStack
-                ? `${formatNumber(draft.heroStack)}（${formatBb(
-                    heroStackBb,
-                  )}）`
-                : formatBb(null)}
-            </p>
-          </div>
+            {draft.heroStack && (
+              <p className="mt-2 font-bold text-emerald-400">
+                {formatNumber(draft.heroStack)}
 
-          <div>
-            <label
-              htmlFor="villainStack"
-              className="mb-2 block font-bold"
-            >
-              相手のスタック
-              <span className="ml-2 text-sm font-normal text-slate-400">
-                Villain（相手）
-              </span>
-            </label>
+                {heroStackBb !== null
+                  ? `（${Number(
+                      heroStackBb.toFixed(2),
+                    )}bb）`
+                  : ""}
+              </p>
+            )}
 
-            <input
-              id="villainStack"
-              inputMode="numeric"
-              value={draft.villainStack}
-              onChange={(event) =>
-                updateField(
-                  "villainStack",
-                  event.target.value,
-                )
-              }
-              placeholder="8500"
-              className="w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-xl font-bold outline-none focus:border-emerald-500"
-            />
-
-            <p className="mt-2 text-sm font-semibold text-emerald-400">
-              {draft.villainStack
-                ? `${formatNumber(
-                    draft.villainStack,
-                  )}（${formatBb(villainStackBb)}）`
-                : formatBb(null)}
-            </p>
+            {!draft.bigBlind && draft.heroStack && (
+              <p className="mt-2 text-sm text-slate-500">
+                BBを入力するとBB換算されます。
+              </p>
+            )}
           </div>
         </section>
 
-        <section className="mt-4 rounded-2xl border border-emerald-900 bg-emerald-950/40 p-5">
-          <p className="text-sm text-emerald-300">
-            有効スタック
-          </p>
+        <section className="mt-4 rounded-2xl border border-emerald-900 bg-emerald-950/30 p-5">
+          <p className="text-sm font-bold text-emerald-300">
+  内容確認
+</p>
 
-          <p className="mt-1 text-2xl font-bold">
-            {effectiveStack === null
-              ? "未計算"
-              : `${Number(
-                  effectiveStack.toFixed(2),
-                )}bb`}
-          </p>
+          <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+            <div className="rounded-xl bg-slate-950 p-3">
+              <p className="text-slate-500">
+                開催場所
+              </p>
 
-          <p className="mt-2 text-sm leading-6 text-slate-400">
-            実際に勝負できる最大額です。自分と相手のうち、
-            少ない方のスタックが基準になります。
-          </p>
+              <p className="mt-1 font-bold">
+                {draft.venue || "未入力"}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-slate-950 p-3">
+              <p className="text-slate-500">
+                テーブル
+              </p>
+
+              <p className="mt-1 font-bold">
+                {draft.tableName || "未入力"}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-slate-950 p-3">
+              <p className="text-slate-500">
+                SB / BB
+              </p>
+
+              <p className="mt-1 font-bold">
+  {draft.smallBlind && draft.bigBlind
+    ? `${draft.smallBlind} / ${draft.bigBlind}`
+    : "未入力"}
+</p>
+            </div>
+
+            <div className="rounded-xl bg-slate-950 p-3">
+              <p className="text-slate-500">
+                自分のスタック
+              </p>
+
+              <p className="mt-1 font-bold">
+                {heroStackBb !== null
+                  ? `${Number(
+                      heroStackBb.toFixed(2),
+                    )}bb`
+                  : "未計算"}
+              </p>
+            </div>
+          </div>
         </section>
 
         {message && (
@@ -400,7 +461,7 @@ export default function NewTablePage() {
           <button
             type="button"
             onClick={saveTable}
-            className="w-full rounded-2xl bg-emerald-500 p-5 text-lg font-bold text-slate-950 transition active:scale-95"
+            className="w-full rounded-2xl bg-emerald-500 p-5 text-lg font-bold text-slate-950 active:scale-95"
           >
             保存して次へ
           </button>

@@ -9,7 +9,9 @@ export default function TurnPage() {
       cardCount={1}
       previousHref="/flop"
       nextHref="/river"
-      previousBoardKeys={["poker-read-flop"]}
+      previousBoardKeys={[
+        "poker-read-flop",
+      ]}
     />
   );
 }

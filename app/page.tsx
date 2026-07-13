@@ -29,13 +29,18 @@ export default function Home() {
   新規ハンドを記録
 </Link>
 
-          <button className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-5 py-5 text-left text-lg font-bold transition active:scale-95">
-            <span className="block text-sm font-semibold text-slate-400">
-              HAND HISTORY
-            </span>
-            ハンド一覧
-          </button>
+          <Link
+  href="/history"
+  className="block w-full rounded-2xl border border-slate-700 bg-slate-900 px-5 py-5 text-left transition active:scale-95"
+>
+  <span className="block text-sm font-semibold text-slate-400">
+    HAND HISTORY
+  </span>
 
+  <span className="mt-1 block text-lg font-bold">
+    ハンド一覧
+  </span>
+</Link>
           <button className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-5 py-5 text-left text-lg font-bold transition active:scale-95">
             <span className="block text-sm font-semibold text-slate-400">
               REVIEW

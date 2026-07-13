@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 const ranks = [
   "A",
@@ -21,36 +21,34 @@ const ranks = [
 ] as const;
 
 const suits = [
-  {
-    symbol: "♠",
-    name: "スペード",
-    text: "text-white",
-  },
-  {
-    symbol: "♥",
-    name: "ハート",
-    text: "text-red-400",
-  },
-  {
-    symbol: "♦",
-    name: "ダイヤ",
-    text: "text-red-400",
-  },
-  {
-    symbol: "♣",
-    name: "クラブ",
-    text: "text-white",
-  },
+  { symbol: "♠", name: "スペード", color: "text-white" },
+  { symbol: "♥", name: "ハート", color: "text-red-400" },
+  { symbol: "♦", name: "ダイヤ", color: "text-red-400" },
+  { symbol: "♣", name: "クラブ", color: "text-white" },
 ] as const;
 
 const EMPTY_PREVIOUS_BOARD_KEYS: string[] = [];
+
+type StreetName = "flop" | "turn" | "river";
 
 type Card = {
   rank: string;
   suit: string;
 };
 
-type Actor = "hero" | "villain";
+type Villain = {
+  id: string;
+  position: string;
+  stack: string;
+};
+
+type Player = {
+  id: string;
+  role: "hero" | "villain";
+  position: string;
+  stack: string;
+  label: string;
+};
 
 type ActionType =
   | "Check"
@@ -62,64 +60,53 @@ type ActionType =
 
 type StreetAction = {
   id: string;
-  actor: Actor;
+  playerId: string;
+  role: "hero" | "villain";
+  position: string;
   action: ActionType;
-
-  /**
-   * Bet / Raise / All-inで入力した最終額。
-   * Callの場合は自動計算された最終投入額。
-   */
   amount: string;
-
-  /**
-   * このアクションで実際に追加された金額。
-   */
   addedAmount: number;
-
-  /**
-   * アクション直前のポット。
-   */
   potBefore: number;
-
-  /**
-   * アクション直前のポットに対する追加額の割合。
-   */
   potPercent: number | null;
 };
 
-type Positions = {
+type StoredPositions = {
   heroPosition?: string;
-  villainPosition?: string;
+  villains?: Villain[];
 };
 
-type CurrentTable = {
+type StoredTable = {
+  heroStack?: string;
   bigBlind?: string;
 };
 
-type SavedPreflop = {
+type StoredHeroHand = {
+  firstCard?: Card;
+  secondCard?: Card;
+};
+
+type StoredPreflop = {
   endingPot?: number;
+  contributions?: Record<string, number>;
+  villains?: Villain[];
 };
 
 type StoredStreet = {
   startingPot?: number;
   endingPot?: number;
-  board: Card[];
-  actions: StreetAction[];
+  board?: Card[];
+  actions?: StreetAction[];
   savedAt?: string;
 };
 
 type StreetDraft = {
-  board: Card[];
-  actions: StreetAction[];
-};
-
-type HeroHandStorage = {
-  firstCard?: Card;
-  secondCard?: Card;
+  board?: Card[];
+  actions?: StreetAction[];
+  activePlayerId?: string;
 };
 
 type StreetEntryProps = {
-  streetName: "flop" | "turn" | "river";
+  streetName: StreetName;
   japaneseTitle: string;
   stepText: string;
   cardCount: number;
@@ -137,7 +124,7 @@ const actionOptions: {
   {
     key: "Check",
     label: "チェック",
-    description: "賭けずに相手へ回す",
+    description: "追加せず相手へ回す",
     needsAmount: false,
   },
   {
@@ -149,26 +136,26 @@ const actionOptions: {
   {
     key: "Call",
     label: "コール",
-    description: "相手の現在額に合わせる",
+    description: "現在の最高額に合わせる",
     needsAmount: false,
   },
   {
     key: "Raise",
     label: "レイズ",
-    description: "現在の投入額をさらに上げる",
+    description: "現在の最高額より上げる",
     needsAmount: true,
   },
   {
     key: "Fold",
     label: "フォールド",
-    description: "降りる",
+    description: "ハンドを降りる",
     needsAmount: false,
   },
   {
     key: "All-in",
     label: "オールイン",
-    description: "最終的な投入額を入力",
-    needsAmount: true,
+    description: "残りスタックをすべて自動投入",
+    needsAmount: false,
   },
 ];
 
@@ -177,6 +164,20 @@ function createEmptyCards(count: number): Card[] {
     rank: "",
     suit: "",
   }));
+}
+
+function safeParse<T>(key: string): T | null {
+  const saved = localStorage.getItem(key);
+
+  if (!saved) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(saved) as T;
+  } catch {
+    return null;
+  }
 }
 
 function formatNumber(value: string | number) {
@@ -226,8 +227,8 @@ function convertToPotPercent(
   return (amountNumber / potNumber) * 100;
 }
 
-function cardText(card: Card) {
-  if (!card.rank || !card.suit) {
+function cardText(card?: Card) {
+  if (!card?.rank || !card?.suit) {
     return "未選択";
   }
 
@@ -243,8 +244,8 @@ function isSameCard(first: Card, second: Card) {
   );
 }
 
-function getStartingPotStorageKey(
-  streetName: StreetEntryProps["streetName"],
+function startingPotStorageKey(
+  streetName: StreetName,
 ) {
   if (streetName === "flop") {
     return "poker-read-preflop";
@@ -255,6 +256,55 @@ function getStartingPotStorageKey(
   }
 
   return "poker-read-turn";
+}
+
+function calculateSpentBeforeStreet(
+  player: Player,
+  streetName: StreetName,
+  preflop: StoredPreflop | null,
+  flop: StoredStreet | null,
+  turn: StoredStreet | null,
+) {
+  let spent = 0;
+
+  spent +=
+    Number(
+      preflop?.contributions?.[player.position],
+    ) || 0;
+
+  if (streetName === "turn" || streetName === "river") {
+    spent +=
+      flop?.actions
+        ?.filter(
+          (action) =>
+            action.playerId === player.id ||
+            action.position === player.position,
+        )
+        .reduce(
+          (total, action) =>
+            total +
+            Number(action.addedAmount || 0),
+          0,
+        ) || 0;
+  }
+
+  if (streetName === "river") {
+    spent +=
+      turn?.actions
+        ?.filter(
+          (action) =>
+            action.playerId === player.id ||
+            action.position === player.position,
+        )
+        .reduce(
+          (total, action) =>
+            total +
+            Number(action.addedAmount || 0),
+          0,
+        ) || 0;
+  }
+
+  return spent;
 }
 
 export default function StreetEntry({
@@ -268,18 +318,15 @@ export default function StreetEntry({
 }: StreetEntryProps) {
   const router = useRouter();
 
-  const [positions, setPositions] =
-    useState<Positions>({});
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [spentBeforeStreet, setSpentBeforeStreet] =
+    useState<Record<string, number>>({});
 
   const [bigBlind, setBigBlind] = useState("");
+  const [startingPot, setStartingPot] = useState(0);
 
-  const [startingPot, setStartingPot] =
-    useState(0);
-
+  const [heroCards, setHeroCards] = useState<Card[]>([]);
   const [previousBoard, setPreviousBoard] =
-    useState<Card[]>([]);
-
-  const [heroCards, setHeroCards] =
     useState<Card[]>([]);
 
   const [board, setBoard] = useState<Card[]>(
@@ -289,17 +336,16 @@ export default function StreetEntry({
   const [activeCardIndex, setActiveCardIndex] =
     useState(0);
 
-  const [actor, setActor] =
-    useState<Actor>("hero");
+  const [activePlayerId, setActivePlayerId] =
+    useState("");
 
   const [selectedAction, setSelectedAction] =
     useState<ActionType | "">("");
 
   const [amount, setAmount] = useState("");
 
-  const [actions, setActions] = useState<
-    StreetAction[]
-  >([]);
+  const [actions, setActions] =
+    useState<StreetAction[]>([]);
 
   const [message, setMessage] = useState("");
   const [loaded, setLoaded] = useState(false);
@@ -308,144 +354,141 @@ export default function StreetEntry({
   const draftKey = `poker-read-${streetName}-draft`;
 
   useEffect(() => {
-    const savedPositions = localStorage.getItem(
-      "poker-read-positions",
-    );
-
-    if (savedPositions) {
-      try {
-        setPositions(
-          JSON.parse(savedPositions) as Positions,
-        );
-      } catch {
-        setMessage(
-          "ポジション情報を読み込めませんでした。",
-        );
-      }
-    }
-
-    const savedTable = localStorage.getItem(
+    const table = safeParse<StoredTable>(
       "poker-read-current-table",
     );
 
-    if (savedTable) {
-      try {
-        const parsed = JSON.parse(
-          savedTable,
-        ) as CurrentTable;
+    const positions = safeParse<StoredPositions>(
+      "poker-read-positions",
+    );
 
-        setBigBlind(parsed.bigBlind ?? "");
-      } catch {
-        setMessage(
-          "テーブル情報を読み込めませんでした。",
-        );
-      }
-    }
+    const preflop = safeParse<StoredPreflop>(
+      "poker-read-preflop",
+    );
 
-    const heroHand = localStorage.getItem(
+    const flop = safeParse<StoredStreet>(
+      "poker-read-flop",
+    );
+
+    const turn = safeParse<StoredStreet>(
+      "poker-read-turn",
+    );
+
+    const heroHand = safeParse<StoredHeroHand>(
       "poker-read-hero-hand",
     );
 
-    if (heroHand) {
-      try {
-        const parsed = JSON.parse(
-          heroHand,
-        ) as HeroHandStorage;
+    setBigBlind(table?.bigBlind ?? "");
 
-        const cards: Card[] = [];
+    const heroPosition =
+      positions?.heroPosition ?? "";
 
-        if (parsed.firstCard) {
-          cards.push(parsed.firstCard);
-        }
+    const villains =
+      Array.isArray(preflop?.villains)
+        ? preflop.villains
+        : Array.isArray(positions?.villains)
+          ? positions.villains
+          : [];
 
-        if (parsed.secondCard) {
-          cards.push(parsed.secondCard);
-        }
+    const loadedPlayers: Player[] = [];
 
-        setHeroCards(cards);
-      } catch {
-        // Hero Handがなくても入力は続けられます。
-      }
+    if (heroPosition) {
+      loadedPlayers.push({
+        id: "hero",
+        role: "hero",
+        position: heroPosition,
+        stack: table?.heroStack ?? "",
+        label: `自分（${heroPosition}）`,
+      });
     }
 
-    const startingPotKey =
-      getStartingPotStorageKey(streetName);
+    villains.forEach((villain) => {
+      loadedPlayers.push({
+        id: `villain-${villain.position}`,
+        role: "villain",
+        position: villain.position,
+        stack: villain.stack,
+        label: `相手（${villain.position}）`,
+      });
+    });
 
-    const savedPreviousStreet =
-      localStorage.getItem(startingPotKey);
+    setPlayers(loadedPlayers);
 
-    if (savedPreviousStreet) {
-      try {
-        if (streetName === "flop") {
-          const parsed = JSON.parse(
-            savedPreviousStreet,
-          ) as SavedPreflop;
+    const spentMap: Record<string, number> = {};
 
-          setStartingPot(parsed.endingPot ?? 0);
-        } else {
-          const parsed = JSON.parse(
-            savedPreviousStreet,
-          ) as StoredStreet;
-
-          setStartingPot(parsed.endingPot ?? 0);
-        }
-      } catch {
-        setMessage(
-          "前のストリートのポットを読み込めませんでした。",
+    loadedPlayers.forEach((player) => {
+      spentMap[player.id] =
+        calculateSpentBeforeStreet(
+          player,
+          streetName,
+          preflop,
+          flop,
+          turn,
         );
+    });
+
+    setSpentBeforeStreet(spentMap);
+
+    if (loadedPlayers.length > 0) {
+      setActivePlayerId(loadedPlayers[0].id);
+    }
+
+    const previousPotData = safeParse<
+      StoredPreflop | StoredStreet
+    >(startingPotStorageKey(streetName));
+
+    setStartingPot(
+      Number(previousPotData?.endingPot) || 0,
+    );
+
+    if (heroHand) {
+      const cards: Card[] = [];
+
+      if (heroHand.firstCard) {
+        cards.push(heroHand.firstCard);
       }
+
+      if (heroHand.secondCard) {
+        cards.push(heroHand.secondCard);
+      }
+
+      setHeroCards(cards);
     }
 
     const loadedPreviousBoard: Card[] = [];
 
     previousBoardKeys.forEach((key) => {
-      const savedStreet =
-        localStorage.getItem(key);
+      const street =
+        safeParse<StoredStreet>(key);
 
-      if (!savedStreet) {
-        return;
-      }
-
-      try {
-        const parsed = JSON.parse(
-          savedStreet,
-        ) as StoredStreet;
-
-        if (Array.isArray(parsed.board)) {
-          loadedPreviousBoard.push(
-            ...parsed.board,
-          );
-        }
-      } catch {
-        // 前ストリートがなくても入力可能にします。
+      if (Array.isArray(street?.board)) {
+        loadedPreviousBoard.push(
+          ...street.board,
+        );
       }
     });
 
     setPreviousBoard(loadedPreviousBoard);
 
-    const savedDraft =
-      localStorage.getItem(draftKey);
+    const draft =
+      safeParse<StreetDraft>(draftKey);
 
-    if (savedDraft) {
-      try {
-        const parsed = JSON.parse(
-          savedDraft,
-        ) as StreetDraft;
+    if (draft) {
+      if (
+        Array.isArray(draft.board) &&
+        draft.board.length === cardCount
+      ) {
+        setBoard(draft.board);
+      }
 
-        setBoard(
-          Array.isArray(parsed.board) &&
-            parsed.board.length === cardCount
-            ? parsed.board
-            : createEmptyCards(cardCount),
+      if (Array.isArray(draft.actions)) {
+        setActions(draft.actions);
+      }
+
+      if (draft.activePlayerId) {
+        setActivePlayerId(
+          draft.activePlayerId,
         );
-
-        setActions(
-          Array.isArray(parsed.actions)
-            ? parsed.actions
-            : [],
-        );
-      } catch {
-        localStorage.removeItem(draftKey);
       }
     }
 
@@ -467,40 +510,95 @@ export default function StreetEntry({
       JSON.stringify({
         board,
         actions,
+        activePlayerId,
       }),
     );
-  }, [actions, board, draftKey, loaded]);
+  }, [
+    actions,
+    activePlayerId,
+    board,
+    draftKey,
+    loaded,
+  ]);
+
+  const activePlayer = players.find(
+    (player) =>
+      player.id === activePlayerId,
+  );
+
+  const foldedPlayerIds = useMemo(
+    () =>
+      new Set(
+        actions
+          .filter(
+            (action) =>
+              action.action === "Fold",
+          )
+          .map(
+            (action) =>
+              action.playerId,
+          ),
+      ),
+    [actions],
+  );
 
   const currentPot = useMemo(() => {
     const addedTotal = actions.reduce(
-      (total, item) =>
-        total + Number(item.addedAmount || 0),
+      (total, action) =>
+        total +
+        Number(action.addedAmount || 0),
       0,
     );
 
     return startingPot + addedTotal;
   }, [actions, startingPot]);
 
-  const actorContributions = useMemo(() => {
-    return actions.reduce(
-      (result, item) => {
-        result[item.actor] +=
-          Number(item.addedAmount || 0);
+  const contributions = useMemo(() => {
+    const result: Record<string, number> = {};
 
-        return result;
-      },
-      {
-        hero: 0,
-        villain: 0,
-      } as Record<Actor, number>,
-    );
-  }, [actions]);
+    players.forEach((player) => {
+      result[player.id] = 0;
+    });
 
-  const currentHighestContribution =
-    Math.max(
-      actorContributions.hero,
-      actorContributions.villain,
-    );
+    actions.forEach((action) => {
+      result[action.playerId] =
+        (result[action.playerId] ?? 0) +
+        Number(action.addedAmount || 0);
+    });
+
+    return result;
+  }, [actions, players]);
+
+  const highestContribution = Math.max(
+    0,
+    ...Object.values(contributions),
+  );
+
+  const activeContribution =
+    activePlayerId
+      ? contributions[activePlayerId] ?? 0
+      : 0;
+
+  const activeSpentBefore =
+    activePlayerId
+      ? spentBeforeStreet[activePlayerId] ?? 0
+      : 0;
+
+  const activeStartingStack =
+    Number(activePlayer?.stack) || 0;
+
+  const activeRemainingStack = Math.max(
+    0,
+    activeStartingStack -
+      activeSpentBefore -
+      activeContribution,
+  );
+
+  const automaticCallAmount = Math.max(
+    0,
+    highestContribution -
+      activeContribution,
+  );
 
   const selectedActionInfo =
     actionOptions.find(
@@ -508,19 +606,12 @@ export default function StreetEntry({
         option.key === selectedAction,
     );
 
-  const activeCard = board[activeCardIndex];
-
-  const inputAmountBb = useMemo(
-    () => convertToBb(amount, bigBlind),
-    [amount, bigBlind],
-  );
-
-  const actorCurrentContribution =
-    actorContributions[actor];
-
   const previewAddedAmount = useMemo(() => {
+    if (!selectedAction) {
+      return 0;
+    }
+
     if (
-      !selectedAction ||
       selectedAction === "Check" ||
       selectedAction === "Fold"
     ) {
@@ -528,24 +619,29 @@ export default function StreetEntry({
     }
 
     if (selectedAction === "Call") {
-      return Math.max(
-        0,
-        currentHighestContribution -
-          actorCurrentContribution,
+      return Math.min(
+        automaticCallAmount,
+        activeRemainingStack,
       );
     }
 
-    const finalAmount = Number(amount) || 0;
+    if (selectedAction === "All-in") {
+      return activeRemainingStack;
+    }
+
+    const finalAmount =
+      Number(amount) || 0;
 
     return Math.max(
       0,
       finalAmount -
-        actorCurrentContribution,
+        activeContribution,
     );
   }, [
-    actorCurrentContribution,
+    activeContribution,
+    activeRemainingStack,
     amount,
-    currentHighestContribution,
+    automaticCallAmount,
     selectedAction,
   ]);
 
@@ -558,26 +654,27 @@ export default function StreetEntry({
     [currentPot, previewAddedAmount],
   );
 
+  const activeCard =
+    board[activeCardIndex];
+
   const boardComplete = board.every(
     (card) =>
       Boolean(card.rank) &&
       Boolean(card.suit),
   );
 
-  function actorLabel(target: Actor) {
-    if (target === "hero") {
-      return `自分${
-        positions.heroPosition
-          ? `（${positions.heroPosition}）`
-          : ""
-      }`;
+  function selectPlayer(playerId: string) {
+    if (foldedPlayerIds.has(playerId)) {
+      setMessage(
+        "このプレイヤーはすでにフォールドしています。",
+      );
+      return;
     }
 
-    return `相手${
-      positions.villainPosition
-        ? `（${positions.villainPosition}）`
-        : ""
-    }`;
+    setActivePlayerId(playerId);
+    setSelectedAction("");
+    setAmount("");
+    setMessage("");
   }
 
   function updateCardRank(rank: string) {
@@ -596,7 +693,7 @@ export default function StreetEntry({
   }
 
   function updateCardSuit(suit: string) {
-    const nextCard = {
+    const nextCard: Card = {
       ...activeCard,
       suit,
     };
@@ -649,10 +746,53 @@ export default function StreetEntry({
     setMessage("");
   }
 
+  function moveToNextPlayer() {
+    if (!activePlayer) {
+      return;
+    }
+
+    const activeIndex =
+      players.findIndex(
+        (player) =>
+          player.id === activePlayer.id,
+      );
+
+    for (
+      let offset = 1;
+      offset <= players.length;
+      offset += 1
+    ) {
+      const nextIndex =
+        (activeIndex + offset) %
+        players.length;
+
+      const nextPlayer =
+        players[nextIndex];
+
+      if (
+        !foldedPlayerIds.has(
+          nextPlayer.id,
+        )
+      ) {
+        setActivePlayerId(
+          nextPlayer.id,
+        );
+        return;
+      }
+    }
+  }
+
   function addAction() {
+    if (!activePlayer) {
+      setMessage(
+        "行動したプレイヤーを選択してください。",
+      );
+      return;
+    }
+
     if (!selectedAction) {
       setMessage(
-        "アクションを選んでください。",
+        "アクションを選択してください。",
       );
       return;
     }
@@ -668,38 +808,39 @@ export default function StreetEntry({
     }
 
     if (
-      selectedAction === "Bet" ||
-      selectedAction === "Raise" ||
-      selectedAction === "All-in"
+      selectedAction === "All-in" &&
+      activeStartingStack <= 0
     ) {
-      const finalAmount = Number(amount);
+      setMessage(
+        "このプレイヤーのスタックを確認してください。",
+      );
+      return;
+    }
 
-      if (
-        !Number.isFinite(finalAmount) ||
-        finalAmount <=
-          actorCurrentContribution
-      ) {
-        setMessage(
-          "現在の投入額より大きい最終額を入力してください。",
-        );
-        return;
-      }
+    if (
+      selectedAction === "All-in" &&
+      activeRemainingStack <= 0
+    ) {
+      setMessage(
+        "残りスタックがありません。",
+      );
+      return;
+    }
 
-      if (
-        selectedAction === "Raise" &&
-        finalAmount <=
-          currentHighestContribution
-      ) {
-        setMessage(
-          "レイズ額は相手の現在額より大きくしてください。",
-        );
-        return;
-      }
+    if (
+      selectedAction === "Check" &&
+      activeContribution <
+        highestContribution
+    ) {
+      setMessage(
+        "コールが必要なため、現在はチェックできません。",
+      );
+      return;
     }
 
     if (
       selectedAction === "Call" &&
-      previewAddedAmount <= 0
+      automaticCallAmount <= 0
     ) {
       setMessage(
         "現在はコールする金額がありません。",
@@ -707,27 +848,102 @@ export default function StreetEntry({
       return;
     }
 
+    if (
+      selectedAction === "Bet" &&
+      highestContribution > 0
+    ) {
+      setMessage(
+        "すでにベットがあるため、レイズを選択してください。",
+      );
+      return;
+    }
+
+    if (
+      selectedAction === "Raise" &&
+      highestContribution <= 0
+    ) {
+      setMessage(
+        "まだベットがないため、ベットを選択してください。",
+      );
+      return;
+    }
+
+    if (
+      selectedActionInfo?.needsAmount
+    ) {
+      const finalAmount =
+        Number(amount);
+
+      if (
+        !Number.isFinite(finalAmount) ||
+        finalAmount <=
+          activeContribution
+      ) {
+        setMessage(
+          "現在の投入額より大きい金額を入力してください。",
+        );
+        return;
+      }
+
+      if (
+        finalAmount -
+          activeContribution >
+        activeRemainingStack
+      ) {
+        setMessage(
+          "残りスタックを超える金額は入力できません。",
+        );
+        return;
+      }
+
+      if (
+        selectedAction === "Raise" &&
+        finalAmount <=
+          highestContribution
+      ) {
+        setMessage(
+          "レイズ額は現在の最高額より大きくしてください。",
+        );
+        return;
+      }
+    }
+
     const finalAmount =
       selectedAction === "Call"
-        ? currentHighestContribution
-        : selectedActionInfo?.needsAmount
-          ? Number(amount)
-          : actorCurrentContribution;
+        ? activeContribution +
+          Math.min(
+            automaticCallAmount,
+            activeRemainingStack,
+          )
+        : selectedAction === "All-in"
+          ? activeContribution +
+            activeRemainingStack
+          : selectedActionInfo?.needsAmount
+            ? Number(amount)
+            : activeContribution;
 
     const addedAmount =
       selectedAction === "Call"
-        ? previewAddedAmount
-        : selectedActionInfo?.needsAmount
-          ? Math.max(
-              0,
-              finalAmount -
-                actorCurrentContribution,
-            )
-          : 0;
+        ? Math.min(
+            automaticCallAmount,
+            activeRemainingStack,
+          )
+        : selectedAction === "All-in"
+          ? activeRemainingStack
+          : selectedActionInfo?.needsAmount
+            ? Math.max(
+                0,
+                finalAmount -
+                  activeContribution,
+              )
+            : 0;
 
-    const newAction: StreetAction = {
+    const action: StreetAction = {
       id: crypto.randomUUID(),
-      actor,
+      playerId: activePlayer.id,
+      role: activePlayer.role,
+      position:
+        activePlayer.position,
       action: selectedAction,
       amount:
         selectedAction === "Check" ||
@@ -745,24 +961,24 @@ export default function StreetEntry({
 
     setActions((current) => [
       ...current,
-      newAction,
+      action,
     ]);
 
     setSelectedAction("");
     setAmount("");
-    setActor(
-      actor === "hero"
-        ? "villain"
-        : "hero",
-    );
     setMessage("");
+
+    moveToNextPlayer();
   }
 
   function undoLastAction() {
-    const lastAction = actions.at(-1);
+    const lastAction =
+      actions.at(-1);
 
     if (lastAction) {
-      setActor(lastAction.actor);
+      setActivePlayerId(
+        lastAction.playerId,
+      );
     }
 
     setActions((current) =>
@@ -780,12 +996,18 @@ export default function StreetEntry({
     );
 
     setActiveCardIndex(0);
-    setActor("hero");
+    setActions([]);
     setSelectedAction("");
     setAmount("");
-    setActions([]);
+
+    if (players.length > 0) {
+      setActivePlayerId(
+        players[0].id,
+      );
+    }
 
     localStorage.removeItem(draftKey);
+    localStorage.removeItem(storageKey);
 
     setMessage(
       `${japaneseTitle}の入力をクリアしました。`,
@@ -802,14 +1024,14 @@ export default function StreetEntry({
 
     if (!boardComplete) {
       setMessage(
-        `${japaneseTitle}のカードをすべて選んでください。`,
+        `${japaneseTitle}のカードを選択してください。`,
       );
       return;
     }
 
     if (actions.length === 0) {
       setMessage(
-        `${japaneseTitle}のアクションを1つ以上入力してください。`,
+        `${japaneseTitle}のアクションを入力してください。`,
       );
       return;
     }
@@ -821,6 +1043,7 @@ export default function StreetEntry({
         endingPot: currentPot,
         board,
         actions,
+        players,
         savedAt:
           new Date().toISOString(),
       }),
@@ -849,10 +1072,6 @@ export default function StreetEntry({
           <h1 className="text-3xl font-bold">
             {japaneseTitle}を記録
           </h1>
-
-          <p className="mt-2 text-sm leading-6 text-slate-400">
-            ボードと、自分・相手の行動を順番に入力します。
-          </p>
         </header>
 
         {previousBoard.length > 0 && (
@@ -884,24 +1103,6 @@ export default function StreetEntry({
           <p className="mt-1 text-3xl font-bold">
             {formatNumber(currentPot)}
           </p>
-
-          <p className="mt-2 text-sm text-slate-300">
-            {convertToBb(
-              currentPot,
-              bigBlind,
-            ) !== null
-              ? `${Number(
-                  convertToBb(
-                    currentPot,
-                    bigBlind,
-                  )!.toFixed(2),
-                )}bb`
-              : "BBを入力するとBB換算されます"}
-          </p>
-
-          <p className="mt-2 text-xs leading-5 text-slate-500">
-            前のストリートと入力済みアクションから自動計算しています。
-          </p>
         </section>
 
         <section className="mb-4 rounded-2xl border border-slate-800 bg-slate-900 p-5">
@@ -916,30 +1117,28 @@ export default function StreetEntry({
                 : "grid-cols-1"
             }`}
           >
-            {board.map(
-              (card, index) => (
-                <button
-                  key={index}
-                  type="button"
-                  onClick={() =>
-                    setActiveCardIndex(index)
-                  }
-                  className={`rounded-2xl border p-4 text-center ${
-                    activeCardIndex === index
-                      ? "border-emerald-500 bg-emerald-950/40"
-                      : "border-slate-700 bg-slate-950"
-                  }`}
-                >
-                  <span className="block text-xs text-slate-400">
-                    {index + 1}枚目
-                  </span>
+            {board.map((card, index) => (
+              <button
+                key={index}
+                type="button"
+                onClick={() =>
+                  setActiveCardIndex(index)
+                }
+                className={`rounded-2xl border p-4 text-center ${
+                  activeCardIndex === index
+                    ? "border-emerald-500 bg-emerald-950/40"
+                    : "border-slate-700 bg-slate-950"
+                }`}
+              >
+                <span className="block text-xs text-slate-400">
+                  {index + 1}枚目
+                </span>
 
-                  <span className="mt-2 block text-3xl font-bold">
-                    {cardText(card)}
-                  </span>
-                </button>
-              ),
-            )}
+                <span className="mt-2 block text-3xl font-bold">
+                  {cardText(card)}
+                </span>
+              </button>
+            ))}
           </div>
 
           <h3 className="mt-6 font-bold">
@@ -987,7 +1186,7 @@ export default function StreetEntry({
                 }`}
               >
                 <span
-                  className={`block text-3xl ${suit.text}`}
+                  className={`block text-3xl ${suit.color}`}
                 >
                   {suit.symbol}
                 </span>
@@ -1002,92 +1201,115 @@ export default function StreetEntry({
 
         <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
           <h2 className="text-lg font-bold">
-            アクションを追加
+            行動したプレイヤー
           </h2>
 
           <div className="mt-4 grid grid-cols-2 gap-3">
-            <button
-              type="button"
-              onClick={() =>
-                setActor("hero")
-              }
-              className={`rounded-xl border p-4 text-left ${
-                actor === "hero"
-                  ? "border-emerald-500 bg-emerald-500 text-slate-950"
-                  : "border-slate-700 bg-slate-950"
-              }`}
-            >
-              <span className="block text-xs">
-                行動した人
-              </span>
+            {players.map((player) => {
+              const selected =
+                player.id === activePlayerId;
 
-              <span className="mt-1 block font-bold">
-                {actorLabel("hero")}
-              </span>
-            </button>
+              const folded =
+                foldedPlayerIds.has(player.id);
 
-            <button
-              type="button"
-              onClick={() =>
-                setActor("villain")
-              }
-              className={`rounded-xl border p-4 text-left ${
-                actor === "villain"
-                  ? "border-sky-400 bg-sky-500 text-slate-950"
-                  : "border-slate-700 bg-slate-950"
-              }`}
-            >
-              <span className="block text-xs">
-                行動した人
-              </span>
+              const contributed =
+                contributions[player.id] ?? 0;
 
-              <span className="mt-1 block font-bold">
-                {actorLabel(
-                  "villain",
-                )}
-              </span>
-            </button>
-          </div>
+              const spentBefore =
+                spentBeforeStreet[player.id] ?? 0;
 
-          <div className="mt-5 grid grid-cols-2 gap-2">
-            {actionOptions.map(
-              (option) => (
+              const remaining = Math.max(
+                0,
+                Number(player.stack) -
+                  spentBefore -
+                  contributed,
+              );
+
+              return (
                 <button
-                  key={option.key}
+                  key={player.id}
                   type="button"
-                  onClick={() => {
-                    setSelectedAction(
-                      option.key,
-                    );
-
-                    if (
-                      !option.needsAmount
-                    ) {
-                      setAmount("");
-                    }
-
-                    setMessage("");
-                  }}
-                  className={`rounded-xl border p-3 text-left ${
-                    selectedAction ===
-                    option.key
-                      ? "border-emerald-500 bg-emerald-500 text-slate-950"
-                      : "border-slate-700 bg-slate-950"
+                  disabled={folded}
+                  onClick={() =>
+                    selectPlayer(player.id)
+                  }
+                  className={`rounded-xl border p-4 text-left ${
+                    folded
+                      ? "cursor-not-allowed border-slate-800 bg-slate-950 text-slate-600"
+                      : selected
+                        ? player.role === "hero"
+                          ? "border-emerald-500 bg-emerald-500 text-slate-950"
+                          : "border-sky-400 bg-sky-500 text-slate-950"
+                        : "border-slate-700 bg-slate-950"
                   }`}
                 >
                   <span className="block font-bold">
-                    {option.label}
+                    {player.label}
                   </span>
 
                   <span className="mt-1 block text-xs">
-                    {
-                      option.description
-                    }
+                    残り：
+                    {formatNumber(remaining)}
                   </span>
                 </button>
-              ),
-            )}
+              );
+            })}
           </div>
+
+          <h2 className="mt-6 text-lg font-bold">
+            アクション
+          </h2>
+
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            {actionOptions.map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => {
+                  setSelectedAction(option.key);
+
+                  if (!option.needsAmount) {
+                    setAmount("");
+                  }
+
+                  setMessage("");
+                }}
+                className={`rounded-xl border p-3 text-left ${
+                  selectedAction === option.key
+                    ? "border-emerald-500 bg-emerald-500 text-slate-950"
+                    : "border-slate-700 bg-slate-950"
+                }`}
+              >
+                <span className="block font-bold">
+                  {option.label}
+                </span>
+
+                <span className="mt-1 block text-xs">
+                  {option.description}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {selectedAction === "All-in" && (
+            <div className="mt-5 rounded-xl border border-amber-800 bg-amber-950/30 p-4">
+              <p className="text-sm text-amber-300">
+                自動計算されるオールイン
+              </p>
+
+              <p className="mt-1 text-xl font-bold">
+                追加 {formatNumber(activeRemainingStack)}
+              </p>
+
+              <p className="mt-1 text-sm text-slate-300">
+                このストリートの最終投入額：
+                {formatNumber(
+                  activeContribution +
+                    activeRemainingStack,
+                )}
+              </p>
+            </div>
+          )}
 
           {selectedAction === "Call" && (
             <div className="mt-5 rounded-xl border border-slate-700 bg-slate-950 p-4">
@@ -1097,19 +1319,11 @@ export default function StreetEntry({
 
               <p className="mt-1 text-xl font-bold text-emerald-400">
                 {formatNumber(
-                  previewAddedAmount,
+                  Math.min(
+                    automaticCallAmount,
+                    activeRemainingStack,
+                  ),
                 )}
-
-                {convertToBb(
-                  previewAddedAmount,
-                  bigBlind,
-                ) !== null &&
-                  `（${Number(
-                    convertToBb(
-                      previewAddedAmount,
-                      bigBlind,
-                    )!.toFixed(2),
-                  )}bb）`}
               </p>
             </div>
           )}
@@ -1122,10 +1336,6 @@ export default function StreetEntry({
               >
                 最終的な投入額
               </label>
-
-              <p className="mt-1 text-sm text-slate-400">
-                レイズの場合も、最終的にいくらまで上げたかを入力します。
-              </p>
 
               <input
                 id={`${streetName}-amount`}
@@ -1142,36 +1352,22 @@ export default function StreetEntry({
                     setAmount(value);
                   }
                 }}
-                placeholder="例：500"
+                placeholder="例：1500"
                 className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-2xl font-bold outline-none focus:border-emerald-500"
               />
 
               {amount && (
-                <div className="mt-3 rounded-xl border border-emerald-900 bg-emerald-950/40 p-4">
-                  <p className="font-bold text-emerald-300">
-                    {formatNumber(amount)}
+                <p className="mt-2 font-bold text-emerald-300">
+                  今回の追加額：
+                  {formatNumber(
+                    previewAddedAmount,
+                  )}
 
-                    {inputAmountBb !== null &&
-                      `（${Number(
-                        inputAmountBb.toFixed(
-                          2,
-                        ),
-                      )}bb）`}
-                  </p>
-
-                  <p className="mt-2 text-sm text-slate-300">
-                    今回の追加額：
-                    {formatNumber(
-                      previewAddedAmount,
-                    )}
-
-                    {previewPotPercent !==
-                      null &&
-                      ` / ${Math.round(
-                        previewPotPercent,
-                      )}% Pot`}
-                  </p>
-                </div>
+                  {previewPotPercent !== null &&
+                    ` / ${Math.round(
+                      previewPotPercent,
+                    )}% Pot`}
+                </p>
               )}
             </div>
           )}
@@ -1194,100 +1390,46 @@ export default function StreetEntry({
             <button
               type="button"
               onClick={undoLastAction}
-              disabled={
-                actions.length === 0
-              }
+              disabled={actions.length === 0}
               className="text-sm font-bold text-amber-300 disabled:text-slate-600"
             >
               1つ戻る
             </button>
           </div>
 
-          {actions.length === 0 ? (
-            <p className="mt-4 text-sm text-slate-500">
-              まだアクションがありません。
-            </p>
-          ) : (
-            <div className="mt-4 space-y-2">
-              {actions.map(
-                (item, index) => {
-                  const addedBb =
-                    convertToBb(
-                      item.addedAmount,
-                      bigBlind,
-                    );
+          <div className="mt-4 space-y-2">
+            {actions.map((action, index) => (
+              <div
+                key={action.id}
+                className="rounded-xl border border-slate-800 bg-slate-950 p-3"
+              >
+                <p className="font-bold">
+                  {index + 1}. {action.position}
+                </p>
 
-                  return (
-                    <div
-                      key={item.id}
-                      className={`rounded-xl border p-3 ${
-                        item.actor ===
-                        "hero"
-                          ? "border-emerald-900 bg-emerald-950/30"
-                          : "border-sky-900 bg-sky-950/30"
-                      }`}
-                    >
-                      <p className="font-bold">
-                        {index + 1}.{" "}
-                        {actorLabel(
-                          item.actor,
-                        )}
-                      </p>
+                <p className="mt-1 text-sm text-slate-300">
+                  {
+                    actionOptions.find(
+                      (option) =>
+                        option.key === action.action,
+                    )?.label
+                  }
 
-                      <p className="mt-1 text-sm text-slate-300">
-                        {
-                          actionOptions.find(
-                            (option) =>
-                              option.key ===
-                              item.action,
-                          )?.label
-                        }
+                  {action.amount &&
+                    ` ${formatNumber(action.amount)}`}
 
-                        {item.amount &&
-                          ` ${formatNumber(
-                            item.amount,
-                          )}`}
-
-                        {addedBb !== null &&
-                          item.addedAmount >
-                            0 &&
-                          `（追加 ${Number(
-                            addedBb.toFixed(
-                              2,
-                            ),
-                          )}bb`}
-
-                        {item.potPercent !==
-                          null &&
-                          item.addedAmount >
-                            0 &&
-                          ` / ${Math.round(
-                            item.potPercent,
-                          )}% Pot`}
-
-                        {addedBb !== null &&
-                          item.addedAmount >
-                            0 &&
-                          "）"}
-                      </p>
-
-                      <p className="mt-1 text-xs text-slate-500">
-                        アクション後ポット：
-                        {formatNumber(
-                          item.potBefore +
-                            item.addedAmount,
-                        )}
-                      </p>
-                    </div>
-                  );
-                },
-              )}
-            </div>
-          )}
+                  {action.addedAmount > 0 &&
+                    `（追加 ${formatNumber(
+                      action.addedAmount,
+                    )}）`}
+                </p>
+              </div>
+            ))}
+          </div>
         </section>
 
         {message && (
-          <p className="mt-4 rounded-xl border border-slate-700 bg-slate-900 p-4 text-sm">
+          <p className="mt-4 rounded-xl border border-red-900 bg-red-950/40 p-4 text-sm text-red-200">
             {message}
           </p>
         )}
@@ -1296,7 +1438,7 @@ export default function StreetEntry({
           <button
             type="button"
             onClick={saveAndNext}
-            className="w-full rounded-2xl bg-emerald-500 p-5 text-lg font-bold text-slate-950 active:scale-95"
+            className="w-full rounded-2xl bg-emerald-500 p-5 text-lg font-bold text-slate-950"
           >
             保存して次へ
           </button>

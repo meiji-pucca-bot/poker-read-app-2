@@ -1,194 +1,188 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-type PositionKey =
-  | "UTG"
-  | "MP"
-  | "HJ"
-  | "CO"
-  | "BTN"
-  | "SB"
-  | "BB";
-
-type PositionInfo = {
-  key: PositionKey;
-  japanese: string;
-  shortDescription: string;
-  beginnerTip: string;
-};
-
-const positions: PositionInfo[] = [
+const positionOptions = [
   {
     key: "UTG",
-    japanese: "アンダー・ザ・ガン",
-    shortDescription: "最初に行動するポジション",
-    beginnerTip:
-      "後ろに多くのプレイヤーが残っているため、強めのハンドを中心に参加します。",
+    reading: "アンダー・ザ・ガン",
+    shortDescription: "プリフロップで最初に行動",
+    description:
+      "最初に行動するため、強いハンドを中心に参加するポジションです。",
+  },
+  {
+    key: "UTG+1",
+    reading: "アンダー・ザ・ガン・プラスワン",
+    shortDescription: "UTGの次に行動",
+    description:
+      "後ろに多くのプレイヤーがいるため、慎重に参加するポジションです。",
   },
   {
     key: "MP",
-    japanese: "ミドルポジション",
+    reading: "ミドルポジション",
     shortDescription: "テーブルの中央付近",
-    beginnerTip:
-      "UTGより少し広く参加できますが、まだ慎重な判断が必要です。",
+    description:
+      "前半と後半の中間にあたり、少しずつ参加範囲を広げられます。",
+  },
+  {
+    key: "LJ",
+    reading: "ロージャック",
+    shortDescription: "HJの1つ前",
+    description:
+      "後ろの人数が少なくなり、比較的参加しやすくなるポジションです。",
   },
   {
     key: "HJ",
-    japanese: "ハイジャック",
-    shortDescription: "後ろ寄りのポジション",
-    beginnerTip:
-      "後ろの人数が少ないため、参加できるハンドが少し増えます。",
+    reading: "ハイジャック",
+    shortDescription: "COの1つ前",
+    description:
+      "後ろにいる人数が少なく、広めのハンドで参加しやすいポジションです。",
   },
   {
     key: "CO",
-    japanese: "カットオフ",
+    reading: "カットオフ",
     shortDescription: "BTNの1つ前",
-    beginnerTip:
-      "かなり有利な位置です。ブラインドを狙って広めに参加できます。",
+    description:
+      "BTNに次いで有利で、広いハンドで参加しやすいポジションです。",
   },
   {
     key: "BTN",
-    japanese: "ボタン",
-    shortDescription: "最後に行動しやすいポジション",
-    beginnerTip:
-      "最も有利なポジションです。相手の行動を見てから判断しやすくなります。",
+    reading: "ボタン",
+    shortDescription: "最も有利なポジション",
+    description:
+      "フロップ以降に最後に行動しやすく、相手を見てから判断できます。",
   },
   {
     key: "SB",
-    japanese: "スモールブラインド",
-    shortDescription: "小さいブラインドを支払う位置",
-    beginnerTip:
-      "フロップ以降は先に行動しやすく、不利になりやすいポジションです。",
+    reading: "スモールブラインド",
+    shortDescription: "小さいブラインドを支払う",
+    description:
+      "フロップ以降は先に行動しやすいため、難しいポジションです。",
   },
   {
     key: "BB",
-    japanese: "ビッグブラインド",
-    shortDescription: "大きいブラインドを支払う位置",
-    beginnerTip:
-      "すでに1BBを支払っているため、相手のレイズにコールしやすい場面があります。",
+    reading: "ビッグブラインド",
+    shortDescription: "大きいブラインドを支払う",
+    description:
+      "すでに1BBを支払っており、プリフロップでは最後に判断できます。",
   },
-];
+] as const;
+
+type Position = (typeof positionOptions)[number]["key"];
+
+type PositionDraft = {
+  heroPosition: Position | "";
+};
 
 type SavedPositions = {
-  heroPosition: PositionKey | "";
-  villainPosition: PositionKey | "";
+  heroPosition: Position;
+  villainPosition: "";
+  villains: [];
+  savedAt: string;
 };
 
-const emptyPositions: SavedPositions = {
-  heroPosition: "",
-  villainPosition: "",
-};
+const draftStorageKey = "poker-read-positions-draft";
+const savedStorageKey = "poker-read-positions";
+
+function positionInfo(position: Position) {
+  return positionOptions.find(
+    (option) => option.key === position,
+  );
+}
 
 export default function PositionsPage() {
-  const [selected, setSelected] =
-    useState<SavedPositions>(emptyPositions);
+  const router = useRouter();
+
+  const [heroPosition, setHeroPosition] =
+    useState<Position | "">("");
 
   const [message, setMessage] = useState("");
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    const saved = localStorage.getItem(
-      "poker-read-positions-draft",
+    const savedDraft = localStorage.getItem(
+      draftStorageKey,
     );
 
-    if (!saved) {
-      return;
+    if (savedDraft) {
+      try {
+        const parsed = JSON.parse(
+          savedDraft,
+        ) as Partial<PositionDraft>;
+
+        setHeroPosition(
+          parsed.heroPosition ?? "",
+        );
+      } catch {
+        localStorage.removeItem(
+          draftStorageKey,
+        );
+      }
     }
 
-    try {
-      const parsed = JSON.parse(saved) as SavedPositions;
-      setSelected(parsed);
-    } catch {
-      localStorage.removeItem(
-        "poker-read-positions-draft",
-      );
-    }
+    setLoaded(true);
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(
-      "poker-read-positions-draft",
-      JSON.stringify(selected),
-    );
-  }, [selected]);
-
-  const heroInfo = positions.find(
-    (position) =>
-      position.key === selected.heroPosition,
-  );
-
-  const villainInfo = positions.find(
-    (position) =>
-      position.key === selected.villainPosition,
-  );
-
-  const isComplete =
-    Boolean(selected.heroPosition) &&
-    Boolean(selected.villainPosition) &&
-    selected.heroPosition !== selected.villainPosition;
-
-  function chooseHero(position: PositionKey) {
-    setSelected((current) => ({
-      ...current,
-      heroPosition: position,
-    }));
-
-    setMessage("");
-  }
-
-  function chooseVillain(position: PositionKey) {
-    setSelected((current) => ({
-      ...current,
-      villainPosition: position,
-    }));
-
-    setMessage("");
-  }
-
-  function clearPositions() {
-    setSelected(emptyPositions);
-    localStorage.removeItem(
-      "poker-read-positions-draft",
-    );
-    setMessage("ポジションをクリアしました。");
-  }
-
-  function savePositions() {
-    if (!selected.heroPosition) {
-      setMessage(
-        "自分のポジションを選んでください。",
-      );
-      return false;
-    }
-
-    if (!selected.villainPosition) {
-      setMessage(
-        "相手のポジションを選んでください。",
-      );
-      return false;
-    }
-
-    if (
-      selected.heroPosition ===
-      selected.villainPosition
-    ) {
-      setMessage(
-        "自分と相手に同じポジションは選べません。",
-      );
-      return false;
+    if (!loaded) {
+      return;
     }
 
     localStorage.setItem(
-      "poker-read-positions",
-      JSON.stringify(selected),
+      draftStorageKey,
+      JSON.stringify({
+        heroPosition,
+      }),
     );
+  }, [heroPosition, loaded]);
 
+  function selectHero(position: Position) {
+    setHeroPosition(position);
+    setMessage("");
+  }
+
+  function clearPosition() {
+    setHeroPosition("");
     setMessage(
-      "ポジションを保存しました。",
+      "ポジション選択をクリアしました。",
     );
 
-    return true;
+    localStorage.removeItem(
+      draftStorageKey,
+    );
+
+    localStorage.removeItem(
+      savedStorageKey,
+    );
+  }
+
+  function savePosition() {
+    if (!heroPosition) {
+      setMessage(
+        "自分のポジションを選択してください。",
+      );
+      return;
+    }
+
+    const savedPositions: SavedPositions = {
+      heroPosition,
+      villainPosition: "",
+      villains: [],
+      savedAt: new Date().toISOString(),
+    };
+
+    localStorage.setItem(
+      savedStorageKey,
+      JSON.stringify(savedPositions),
+    );
+
+    localStorage.removeItem(
+      draftStorageKey,
+    );
+
+    router.push("/preflop");
   }
 
   return (
@@ -203,15 +197,16 @@ export default function PositionsPage() {
           </Link>
 
           <p className="mb-2 text-sm font-bold text-emerald-400">
-            STEP 3 / ポジション
+            STEP 3 / 自分のポジション
           </p>
 
           <h1 className="text-3xl font-bold">
-            ポジションを選ぶ
+            自分のポジションを選ぶ
           </h1>
 
           <p className="mt-2 text-sm leading-6 text-slate-400">
-            自分と相手が、テーブルのどの位置にいたかを選んでください。
+            あなたが座っていた位置を選択してください。
+            相手のポジションとスタックは、次のプリフロップ画面で登録します。
           </p>
         </header>
 
@@ -219,181 +214,108 @@ export default function PositionsPage() {
           <div className="h-full w-3/5 rounded-full bg-emerald-500" />
         </div>
 
-        <section className="mb-5 rounded-2xl border border-slate-800 bg-slate-900 p-5">
-          <div className="mb-4">
-            <p className="text-sm font-bold text-emerald-400">
-              自分（Hero）
-            </p>
-
-            <h2 className="mt-1 text-xl font-bold">
-              自分のポジション
-            </h2>
-
-            <p className="mt-1 text-sm text-slate-400">
-              あなたが座っていた位置です。
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            {positions.map((position) => (
-              <button
-                key={position.key}
-                type="button"
-                onClick={() =>
-                  chooseHero(position.key)
-                }
-                className={`rounded-2xl border p-4 text-left transition active:scale-95 ${
-                  selected.heroPosition ===
-                  position.key
-                    ? "border-emerald-500 bg-emerald-500 text-slate-950"
-                    : "border-slate-700 bg-slate-950"
-                }`}
-              >
-                <span className="block text-xl font-bold">
-                  {position.key}
-                </span>
-
-                <span className="mt-1 block text-xs">
-                  {position.shortDescription}
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {heroInfo && (
-            <div className="mt-4 rounded-xl border border-emerald-900 bg-emerald-950/40 p-4">
-              <p className="font-bold text-emerald-300">
-                {heroInfo.key}（
-                {heroInfo.japanese}）
-              </p>
-
-              <p className="mt-2 text-sm leading-6 text-slate-300">
-                {heroInfo.beginnerTip}
-              </p>
-            </div>
-          )}
-        </section>
-
         <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-          <div className="mb-4">
-            <p className="text-sm font-bold text-sky-400">
-              相手（Villain）
-            </p>
-
-            <h2 className="mt-1 text-xl font-bold">
-              相手のポジション
-            </h2>
-
-            <p className="mt-1 text-sm text-slate-400">
-              今回読みたい相手の位置です。
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            {positions.map((position) => (
-              <button
-                key={position.key}
-                type="button"
-                onClick={() =>
-                  chooseVillain(position.key)
-                }
-                disabled={
-                  selected.heroPosition ===
-                  position.key
-                }
-                className={`rounded-2xl border p-4 text-left transition ${
-                  selected.heroPosition ===
-                  position.key
-                    ? "cursor-not-allowed border-slate-800 bg-slate-900 text-slate-600"
-                    : selected.villainPosition ===
-                        position.key
-                      ? "border-sky-400 bg-sky-500 text-slate-950 active:scale-95"
-                      : "border-slate-700 bg-slate-950 active:scale-95"
-                }`}
-              >
-                <span className="block text-xl font-bold">
-                  {position.key}
-                </span>
-
-                <span className="mt-1 block text-xs">
-                  {position.shortDescription}
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {villainInfo && (
-            <div className="mt-4 rounded-xl border border-sky-900 bg-sky-950/40 p-4">
-              <p className="font-bold text-sky-300">
-                {villainInfo.key}（
-                {villainInfo.japanese}）
-              </p>
-
-              <p className="mt-2 text-sm leading-6 text-slate-300">
-                {villainInfo.beginnerTip}
-              </p>
-            </div>
-          )}
-        </section>
-
-        <section className="mt-4 rounded-2xl border border-slate-800 bg-slate-900 p-5">
-          <p className="text-sm text-slate-400">
-            現在の選択
+          <p className="text-sm font-bold text-emerald-400">
+            自分（Hero）
           </p>
 
-          <div className="mt-3 grid grid-cols-2 gap-3">
-            <div className="rounded-xl bg-slate-950 p-4">
-              <p className="text-xs text-emerald-400">
-                自分
-              </p>
+          <h2 className="mt-1 text-2xl font-bold">
+            自分のポジション
+          </h2>
 
-              <p className="mt-1 text-2xl font-bold">
-                {selected.heroPosition ||
-                  "未選択"}
-              </p>
-            </div>
+          <p className="mt-2 text-sm text-slate-400">
+            あなたが座っていた位置です。
+          </p>
 
-            <div className="rounded-xl bg-slate-950 p-4">
-              <p className="text-xs text-sky-400">
-                相手
-              </p>
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            {positionOptions.map((option) => {
+              const selected =
+                heroPosition === option.key;
 
-              <p className="mt-1 text-2xl font-bold">
-                {selected.villainPosition ||
-                  "未選択"}
-              </p>
-            </div>
+              return (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() =>
+                    selectHero(option.key)
+                  }
+                  className={`rounded-2xl border p-4 text-left transition active:scale-95 ${
+                    selected
+                      ? "border-emerald-500 bg-emerald-500 text-slate-950"
+                      : "border-slate-700 bg-slate-950"
+                  }`}
+                >
+                  <span className="block text-xl font-bold">
+                    {option.key}
+                  </span>
+
+                  <span className="mt-1 block text-sm font-bold">
+                    {option.reading}
+                  </span>
+
+                  <span className="mt-2 block text-xs leading-5">
+                    {option.shortDescription}
+                  </span>
+                </button>
+              );
+            })}
           </div>
+
+          {heroPosition && (
+            <div className="mt-5 rounded-xl border border-emerald-900 bg-emerald-950/40 p-4">
+              <p className="font-bold text-emerald-300">
+                {heroPosition}（
+                {positionInfo(heroPosition)?.reading}
+                ）
+              </p>
+
+              <p className="mt-2 text-sm leading-6 text-slate-300">
+                {
+                  positionInfo(heroPosition)
+                    ?.description
+                }
+              </p>
+            </div>
+          )}
+        </section>
+
+        <section className="mt-5 rounded-2xl border border-emerald-900 bg-emerald-950/30 p-5">
+          <p className="text-sm font-bold text-emerald-300">
+            内容確認
+          </p>
+
+          <p className="mt-3 text-sm text-slate-500">
+            自分のポジション
+          </p>
+
+          <p className="mt-1 text-xl font-bold text-emerald-400">
+            {heroPosition
+              ? `${heroPosition}（${
+                  positionInfo(heroPosition)
+                    ?.reading
+                }）`
+              : "未選択"}
+          </p>
         </section>
 
         {message && (
-          <p className="mt-4 rounded-xl border border-slate-700 bg-slate-900 p-4 text-sm">
+          <p className="mt-4 rounded-xl border border-red-900 bg-red-950/40 p-4 text-sm text-red-200">
             {message}
           </p>
         )}
 
         <div className="mt-6 space-y-3">
-          <Link
-            href={
-              isComplete ? "/preflop" : "#"
-            }
-            onClick={(event) => {
-              if (!savePositions()) {
-                event.preventDefault();
-              }
-            }}
-            className={`block w-full rounded-2xl p-5 text-center text-lg font-bold transition ${
-              isComplete
-                ? "bg-emerald-500 text-slate-950 active:scale-95"
-                : "cursor-not-allowed bg-slate-800 text-slate-500"
-            }`}
+          <button
+            type="button"
+            onClick={savePosition}
+            className="w-full rounded-2xl bg-emerald-500 p-5 text-lg font-bold text-slate-950 active:scale-95"
           >
             保存して次へ
-          </Link>
+          </button>
 
           <button
             type="button"
-            onClick={clearPositions}
+            onClick={clearPosition}
             className="w-full rounded-2xl border border-slate-700 bg-slate-900 p-4 font-bold text-slate-300"
           >
             選択をクリア

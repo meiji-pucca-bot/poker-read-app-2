@@ -1,11 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 const tablePositions = [
   "UTG",
+  "UTG+1",
   "MP",
+  "LJ",
   "HJ",
   "CO",
   "BTN",
@@ -23,6 +26,7 @@ type ActionType =
   | "Open"
   | "3BET"
   | "4BET"
+  | "5BET"
   | "All-in";
 
 type PreflopAction = {
@@ -30,19 +34,33 @@ type PreflopAction = {
   position: Position;
   action: ActionType;
   amount: string;
+  addedAmount: number;
+  potBefore: number;
+};
+
+type Villain = {
+  id: string;
+  position: Position;
+  stack: string;
 };
 
 type SavedPositions = {
-  heroPosition: Position | "";
-  villainPosition: Position | "";
+  heroPosition?: Position;
 };
 
 type SavedTable = {
   smallBlind?: string;
   bigBlind?: string;
+  heroStack?: string;
 };
 
 type ContributionMap = Record<Position, number>;
+
+type PreflopDraft = {
+  actions?: PreflopAction[];
+  villains?: Villain[];
+  activePosition?: Position;
+};
 
 const actionOptions: {
   key: ActionType;
@@ -53,7 +71,7 @@ const actionOptions: {
   {
     key: "Fold",
     label: "フォールド",
-    description: "降りる",
+    description: "ハンドを降りる",
     needsAmount: false,
   },
   {
@@ -83,7 +101,7 @@ const actionOptions: {
   {
     key: "3BET",
     label: "3ベット",
-    description: "レイズへの再レイズ",
+    description: "オープンへの再レイズ",
     needsAmount: true,
   },
   {
@@ -93,10 +111,16 @@ const actionOptions: {
     needsAmount: true,
   },
   {
+    key: "5BET",
+    label: "5ベット",
+    description: "4ベットへの再レイズ",
+    needsAmount: true,
+  },
+  {
     key: "All-in",
     label: "オールイン",
-    description: "残りスタックをすべて賭ける",
-    needsAmount: true,
+    description: "残りスタックをすべて自動投入",
+    needsAmount: false,
   },
 ];
 
@@ -110,7 +134,10 @@ function formatNumber(value: string | number) {
   return number.toLocaleString("ja-JP");
 }
 
-function amountToBb(amount: string | number, bigBlind: string) {
+function amountToBb(
+  amount: string | number,
+  bigBlind: string,
+) {
   const amountNumber = Number(amount);
   const bbNumber = Number(bigBlind);
 
@@ -126,29 +153,38 @@ function amountToBb(amount: string | number, bigBlind: string) {
   return amountNumber / bbNumber;
 }
 
-function calculatePreflopPot(
-  actions: PreflopAction[],
+function createInitialContributions(
   smallBlind: string,
   bigBlind: string,
-) {
-  const contributions: ContributionMap = {
+): ContributionMap {
+  return {
     UTG: 0,
+    "UTG+1": 0,
     MP: 0,
+    LJ: 0,
     HJ: 0,
     CO: 0,
     BTN: 0,
     SB: Number(smallBlind) || 0,
     BB: Number(bigBlind) || 0,
   };
+}
+
+function calculatePreflopState(
+  actions: PreflopAction[],
+  smallBlind: string,
+  bigBlind: string,
+) {
+  const contributions = createInitialContributions(
+    smallBlind,
+    bigBlind,
+  );
 
   let highestContribution = Math.max(
     ...Object.values(contributions),
   );
 
   actions.forEach((action) => {
-    const currentContribution =
-      contributions[action.position];
-
     if (
       action.action === "Fold" ||
       action.action === "Check"
@@ -156,24 +192,8 @@ function calculatePreflopPot(
       return;
     }
 
-    if (action.action === "Limp") {
-      contributions[action.position] = Math.max(
-        currentContribution,
-        Number(bigBlind) || 0,
-      );
-    } else if (action.action === "Call") {
-      contributions[action.position] = Math.max(
-        currentContribution,
-        highestContribution,
-      );
-    } else {
-      const finalAmount = Number(action.amount) || 0;
-
-      contributions[action.position] = Math.max(
-        currentContribution,
-        finalAmount,
-      );
-    }
+    contributions[action.position] +=
+      Number(action.addedAmount) || 0;
 
     highestContribution = Math.max(
       highestContribution,
@@ -194,18 +214,20 @@ function calculatePreflopPot(
 }
 
 export default function PreflopPage() {
-  const [heroPosition, setHeroPosition] =
-    useState<Position | "">("");
+  const router = useRouter();
 
-  const [villainPosition, setVillainPosition] =
+  const [heroPosition, setHeroPosition] =
     useState<Position | "">("");
 
   const [smallBlind, setSmallBlind] = useState("");
   const [bigBlind, setBigBlind] = useState("");
+  const [heroStack, setHeroStack] = useState("");
 
-  const [actions, setActions] = useState<PreflopAction[]>(
-    [],
-  );
+  const [villains, setVillains] =
+    useState<Villain[]>([]);
+
+  const [actions, setActions] =
+    useState<PreflopAction[]>([]);
 
   const [activePosition, setActivePosition] =
     useState<Position>("UTG");
@@ -214,6 +236,10 @@ export default function PreflopPage() {
     useState<ActionType | "">("");
 
   const [amount, setAmount] = useState("");
+
+  const [villainStackInput, setVillainStackInput] =
+    useState("");
+
   const [message, setMessage] = useState("");
   const [loaded, setLoaded] = useState(false);
 
@@ -228,8 +254,7 @@ export default function PreflopPage() {
           savedPositions,
         ) as SavedPositions;
 
-        setHeroPosition(parsed.heroPosition);
-        setVillainPosition(parsed.villainPosition);
+        setHeroPosition(parsed.heroPosition ?? "");
       } catch {
         setMessage(
           "ポジション情報を読み込めませんでした。",
@@ -249,6 +274,7 @@ export default function PreflopPage() {
 
         setSmallBlind(parsed.smallBlind ?? "");
         setBigBlind(parsed.bigBlind ?? "");
+        setHeroStack(parsed.heroStack ?? "");
       } catch {
         setMessage(
           "テーブル情報を読み込めませんでした。",
@@ -262,11 +288,30 @@ export default function PreflopPage() {
 
     if (savedDraft) {
       try {
-        const parsed = JSON.parse(savedDraft) as {
-          actions?: PreflopAction[];
-        };
+        const parsed = JSON.parse(
+          savedDraft,
+        ) as PreflopDraft;
 
-        setActions(parsed.actions ?? []);
+        setActions(
+          Array.isArray(parsed.actions)
+            ? parsed.actions
+            : [],
+        );
+
+        setVillains(
+          Array.isArray(parsed.villains)
+            ? parsed.villains
+            : [],
+        );
+
+        if (
+          parsed.activePosition &&
+          tablePositions.includes(
+            parsed.activePosition,
+          )
+        ) {
+          setActivePosition(parsed.activePosition);
+        }
       } catch {
         localStorage.removeItem(
           "poker-read-preflop-draft",
@@ -284,22 +329,17 @@ export default function PreflopPage() {
 
     localStorage.setItem(
       "poker-read-preflop-draft",
-      JSON.stringify({ actions }),
+      JSON.stringify({
+        actions,
+        villains,
+        activePosition,
+      }),
     );
-  }, [actions, loaded]);
-
-  const selectedOption = actionOptions.find(
-    (option) => option.key === selectedAction,
-  );
-
-  const enteredBb = useMemo(
-    () => amountToBb(amount, bigBlind),
-    [amount, bigBlind],
-  );
+  }, [actions, villains, activePosition, loaded]);
 
   const preflopState = useMemo(
     () =>
-      calculatePreflopPot(
+      calculatePreflopState(
         actions,
         smallBlind,
         bigBlind,
@@ -307,36 +347,333 @@ export default function PreflopPage() {
     [actions, smallBlind, bigBlind],
   );
 
+  const selectedOption = actionOptions.find(
+    (option) => option.key === selectedAction,
+  );
+
+  const activeContribution =
+    preflopState.contributions[activePosition];
+
+  const automaticCallAmount = Math.max(
+    0,
+    preflopState.highestContribution -
+      activeContribution,
+  );
+
+  const activeVillain = villains.find(
+    (villain) =>
+      villain.position === activePosition,
+  );
+
+  const activeStartingStack =
+    activePosition === heroPosition
+      ? Number(heroStack) || 0
+      : Number(activeVillain?.stack) || 0;
+
+  const activeRemainingStack = Math.max(
+    0,
+    activeStartingStack - activeContribution,
+  );
+
+  const previewAddedAmount = useMemo(() => {
+    if (selectedAction === "Limp") {
+      return Math.min(
+        activeRemainingStack,
+        Math.max(
+          0,
+          Number(bigBlind) - activeContribution,
+        ),
+      );
+    }
+
+    if (selectedAction === "Call") {
+      return Math.min(
+        activeRemainingStack,
+        automaticCallAmount,
+      );
+    }
+
+    if (selectedAction === "All-in") {
+      return activeRemainingStack;
+    }
+
+    if (selectedOption?.needsAmount) {
+      return Math.max(
+        0,
+        Number(amount) - activeContribution,
+      );
+    }
+
+    return 0;
+  }, [
+    selectedAction,
+    selectedOption,
+    bigBlind,
+    activeContribution,
+    automaticCallAmount,
+    activeRemainingStack,
+    amount,
+  ]);
+
+  const enteredBb = amountToBb(amount, bigBlind);
+
+  useEffect(() => {
+    setVillainStackInput(
+      activeVillain?.stack ?? "",
+    );
+  }, [activePosition, activeVillain?.stack]);
+
+  function isVillain(position: Position) {
+    return villains.some(
+      (villain) => villain.position === position,
+    );
+  }
+
+  function actorLabel(position: Position) {
+    if (position === heroPosition) {
+      return `${position}（自分）`;
+    }
+
+    if (isVillain(position)) {
+      return `${position}（相手）`;
+    }
+
+    return position;
+  }
+
+  function selectPosition(position: Position) {
+    setActivePosition(position);
+
+    const selectedVillain = villains.find(
+      (villain) =>
+        villain.position === position,
+    );
+
+    setVillainStackInput(
+      selectedVillain?.stack ?? "",
+    );
+
+    setSelectedAction("");
+    setAmount("");
+    setMessage("");
+  }
+
+  function registerVillain() {
+    if (activePosition === heroPosition) {
+      setMessage(
+        "自分のポジションは相手として登録できません。",
+      );
+      return;
+    }
+
+    const stackNumber = Number(villainStackInput);
+
+    if (
+      !villainStackInput ||
+      !Number.isFinite(stackNumber) ||
+      stackNumber <= 0
+    ) {
+      setMessage(
+        "相手のおおよそのスタックを入力してください。",
+      );
+      return;
+    }
+
+    setVillains((current) => {
+      const existing = current.find(
+        (villain) =>
+          villain.position === activePosition,
+      );
+
+      if (existing) {
+        return current.map((villain) =>
+          villain.position === activePosition
+            ? {
+                ...villain,
+                stack: villainStackInput,
+              }
+            : villain,
+        );
+      }
+
+      return [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          position: activePosition,
+          stack: villainStackInput,
+        },
+      ];
+    });
+
+    setMessage(
+      `${activePosition}を相手として登録しました。`,
+    );
+  }
+
+  function removeVillain(position: Position) {
+    setVillains((current) =>
+      current.filter(
+        (villain) =>
+          villain.position !== position,
+      ),
+    );
+
+    setVillainStackInput("");
+    setMessage(
+      `${position}の相手登録を解除しました。`,
+    );
+  }
+
   function addAction() {
     if (!selectedAction) {
-      setMessage("アクションを選んでください。");
+      setMessage(
+        "アクションを選んでください。",
+      );
       return;
     }
 
-    if (selectedOption?.needsAmount && !amount) {
-      setMessage("金額を入力してください。");
+    if (
+      selectedOption?.needsAmount &&
+      !amount
+    ) {
+      setMessage(
+        "最終的な投入額を入力してください。",
+      );
       return;
     }
 
-    let resolvedAmount = "";
+    if (
+      selectedAction === "All-in" &&
+      activeStartingStack <= 0
+    ) {
+      setMessage(
+        activePosition === heroPosition
+          ? "自分のスタックを確認してください。"
+          : "先にこの相手のスタックを登録してください。",
+      );
+      return;
+    }
+
+    if (
+      selectedAction === "All-in" &&
+      activeRemainingStack <= 0
+    ) {
+      setMessage(
+        "残りスタックがありません。",
+      );
+      return;
+    }
+
+    if (
+      selectedAction === "Check" &&
+      activeContribution <
+        preflopState.highestContribution
+    ) {
+      setMessage(
+        "コールが必要なため、現在はチェックできません。",
+      );
+      return;
+    }
+
+    if (
+      selectedAction === "Call" &&
+      automaticCallAmount <= 0
+    ) {
+      setMessage(
+        "現在はコールする金額がありません。",
+      );
+      return;
+    }
+
+    if (
+      selectedAction === "Limp" &&
+      preflopState.highestContribution >
+        Number(bigBlind)
+    ) {
+      setMessage(
+        "すでにレイズがあるため、コールを選んでください。",
+      );
+      return;
+    }
+
+    if (selectedOption?.needsAmount) {
+      const finalAmount = Number(amount);
+
+      if (
+        !Number.isFinite(finalAmount) ||
+        finalAmount <= activeContribution
+      ) {
+        setMessage(
+          "現在の投入額より大きい金額を入力してください。",
+        );
+        return;
+      }
+
+      if (
+        activeStartingStack > 0 &&
+        finalAmount > activeStartingStack
+      ) {
+        setMessage(
+          "スタックを超える金額は入力できません。",
+        );
+        return;
+      }
+
+      if (
+        finalAmount <=
+        preflopState.highestContribution
+      ) {
+        setMessage(
+          "レイズ額は現在の最高額より大きくしてください。",
+        );
+        return;
+      }
+    }
+
+    let finalAmount = activeContribution;
 
     if (selectedAction === "Limp") {
-      resolvedAmount = bigBlind;
+      finalAmount = Math.min(
+        Number(bigBlind) || 0,
+        activeStartingStack || Number(bigBlind) || 0,
+      );
     } else if (selectedAction === "Call") {
-      resolvedAmount =
-        preflopState.highestContribution.toString();
+      finalAmount =
+        activeContribution +
+        Math.min(
+          automaticCallAmount,
+          activeRemainingStack || automaticCallAmount,
+        );
+    } else if (selectedAction === "All-in") {
+      finalAmount = activeStartingStack;
     } else if (selectedOption?.needsAmount) {
-      resolvedAmount = amount;
+      finalAmount = Number(amount);
     }
+
+    const addedAmount = Math.max(
+      0,
+      finalAmount - activeContribution,
+    );
 
     const newAction: PreflopAction = {
       id: crypto.randomUUID(),
       position: activePosition,
       action: selectedAction,
-      amount: resolvedAmount,
+      amount:
+        selectedAction === "Fold" ||
+        selectedAction === "Check"
+          ? ""
+          : String(finalAmount),
+      addedAmount,
+      potBefore: preflopState.pot,
     };
 
-    setActions((current) => [...current, newAction]);
+    setActions((current) => [
+      ...current,
+      newAction,
+    ]);
+
     setSelectedAction("");
     setAmount("");
     setMessage("");
@@ -344,17 +681,22 @@ export default function PreflopPage() {
     const currentIndex =
       tablePositions.indexOf(activePosition);
 
-    if (currentIndex < tablePositions.length - 1) {
-      setActivePosition(
+    if (
+      currentIndex <
+      tablePositions.length - 1
+    ) {
+      selectPosition(
         tablePositions[currentIndex + 1],
       );
+    } else {
+      selectPosition("UTG");
     }
   }
 
   function foldUntilHero() {
     if (!heroPosition) {
       setMessage(
-        "先にポジション画面で自分の位置を選んでください。",
+        "自分のポジションが読み込まれていません。",
       );
       return;
     }
@@ -362,48 +704,66 @@ export default function PreflopPage() {
     const heroIndex =
       tablePositions.indexOf(heroPosition);
 
-    const existingPositions = new Set(
-      actions.map((action) => action.position),
+    const actedPositions = new Set(
+      actions.map(
+        (action) => action.position,
+      ),
     );
 
-    const folds: PreflopAction[] = tablePositions
-      .slice(0, heroIndex)
-      .filter(
-        (position) =>
-          !existingPositions.has(position),
-      )
-      .map((position) => ({
-        id: crypto.randomUUID(),
-        position,
-        action: "Fold",
-        amount: "",
-      }));
+    const folds: PreflopAction[] =
+      tablePositions
+        .slice(0, heroIndex)
+        .filter(
+          (position) =>
+            !actedPositions.has(position),
+        )
+        .map((position) => ({
+          id: crypto.randomUUID(),
+          position,
+          action: "Fold",
+          amount: "",
+          addedAmount: 0,
+          potBefore: preflopState.pot,
+        }));
 
-    setActions((current) => [...current, ...folds]);
-    setActivePosition(heroPosition);
-    setMessage("");
+    setActions((current) => [
+      ...current,
+      ...folds,
+    ]);
+
+    selectPosition(heroPosition);
   }
 
   function undoLastAction() {
     const lastAction = actions.at(-1);
 
     if (lastAction) {
-      setActivePosition(lastAction.position);
+      selectPosition(lastAction.position);
     }
 
-    setActions((current) => current.slice(0, -1));
+    setActions((current) =>
+      current.slice(0, -1),
+    );
+
     setMessage("");
   }
 
   function clearActions() {
     setActions([]);
+    setVillains([]);
+    setActivePosition("UTG");
+    setSelectedAction("");
+    setAmount("");
+    setVillainStackInput("");
+
     localStorage.removeItem(
       "poker-read-preflop-draft",
     );
 
-    setActivePosition("UTG");
-    setSelectedAction("");
-    setAmount("");
+    localStorage.removeItem(
+      "poker-read-preflop",
+    );
+
     setMessage(
       "プリフロップ入力をクリアしました。",
     );
@@ -412,9 +772,16 @@ export default function PreflopPage() {
   function savePreflop() {
     if (actions.length === 0) {
       setMessage(
-        "プリフロップのアクションを1つ以上入力してください。",
+        "プリフロップのアクションを入力してください。",
       );
-      return false;
+      return;
+    }
+
+    if (villains.length === 0) {
+      setMessage(
+        "対戦した相手を1人以上登録してください。",
+      );
+      return;
     }
 
     localStorage.setItem(
@@ -424,23 +791,28 @@ export default function PreflopPage() {
         endingPot: preflopState.pot,
         contributions:
           preflopState.contributions,
+        heroPosition,
+        villains,
         savedAt: new Date().toISOString(),
       }),
     );
 
-    return true;
-  }
+    localStorage.setItem(
+      "poker-read-positions",
+      JSON.stringify({
+        heroPosition,
+        villainPosition:
+          villains[0]?.position ?? "",
+        villains,
+        savedAt: new Date().toISOString(),
+      }),
+    );
 
-  function actorLabel(position: Position) {
-    if (position === heroPosition) {
-      return `${position}（自分）`;
-    }
+    localStorage.removeItem(
+      "poker-read-preflop-draft",
+    );
 
-    if (position === villainPosition) {
-      return `${position}（相手）`;
-    }
-
-    return position;
+    router.push("/flop");
   }
 
   return (
@@ -463,8 +835,8 @@ export default function PreflopPage() {
           </h1>
 
           <p className="mt-2 text-sm leading-6 text-slate-400">
-            カードが配られてからフロップが開くまでの行動を、
-            順番に入力します。
+            各ポジションの行動を順番に入力します。
+            実際に対戦した相手だけ、ポジションとスタックを登録してください。
           </p>
         </header>
 
@@ -472,42 +844,32 @@ export default function PreflopPage() {
           <div className="h-full w-1/2 rounded-full bg-emerald-500" />
         </div>
 
-        <section className="mb-4 grid grid-cols-4 gap-2">
-          <div className="rounded-xl bg-slate-900 p-3">
-            <p className="text-xs text-slate-400">
-              自分
-            </p>
-            <p className="mt-1 font-bold text-emerald-400">
-              {heroPosition || "未選択"}
-            </p>
-          </div>
+        <section className="mb-4 rounded-2xl border border-slate-800 bg-slate-900 p-5">
+          <p className="text-sm text-slate-400">
+            自分のポジション
+          </p>
 
-          <div className="rounded-xl bg-slate-900 p-3">
-            <p className="text-xs text-slate-400">
-              相手
-            </p>
-            <p className="mt-1 font-bold text-sky-400">
-              {villainPosition || "未選択"}
-            </p>
-          </div>
+          <p className="mt-1 text-2xl font-bold text-emerald-400">
+            {heroPosition || "未選択"}
+          </p>
 
-          <div className="rounded-xl bg-slate-900 p-3">
-            <p className="text-xs text-slate-400">
-              SB
-            </p>
-            <p className="mt-1 font-bold">
-              {smallBlind || "未入力"}
-            </p>
-          </div>
+          <p className="mt-2 text-sm text-slate-300">
+            自分のスタック：
+            {heroStack
+              ? formatNumber(heroStack)
+              : "未入力"}
 
-          <div className="rounded-xl bg-slate-900 p-3">
-            <p className="text-xs text-slate-400">
-              BB
-            </p>
-            <p className="mt-1 font-bold">
-              {bigBlind || "未入力"}
-            </p>
-          </div>
+            {amountToBb(
+              heroStack,
+              bigBlind,
+            ) !== null &&
+              `（${Number(
+                amountToBb(
+                  heroStack,
+                  bigBlind,
+                )!.toFixed(2),
+              )}bb）`}
+          </p>
         </section>
 
         <section className="mb-4 rounded-2xl border border-emerald-900 bg-emerald-950/40 p-5">
@@ -520,18 +882,17 @@ export default function PreflopPage() {
           </p>
 
           <p className="mt-2 text-sm text-slate-300">
-            {bigBlind && Number(bigBlind) > 0
+            {amountToBb(
+              preflopState.pot,
+              bigBlind,
+            ) !== null
               ? `${Number(
-                  (
-                    preflopState.pot /
-                    Number(bigBlind)
-                  ).toFixed(2),
+                  amountToBb(
+                    preflopState.pot,
+                    bigBlind,
+                  )!.toFixed(2),
                 )}bb`
-              : "BBを入力するとBB換算されます"}
-          </p>
-
-          <p className="mt-2 text-xs leading-5 text-slate-500">
-            SB・BBと、入力済みのアクションから自動計算しています。
+              : "BB換算できません"}
           </p>
         </section>
 
@@ -540,7 +901,7 @@ export default function PreflopPage() {
           onClick={foldUntilHero}
           className="mb-4 w-full rounded-xl border border-emerald-800 bg-emerald-950/40 p-4 font-bold text-emerald-300"
         >
-          自分の手前まで全員フォールド
+          自分の手前まで未入力者をフォールド
         </button>
 
         <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
@@ -548,35 +909,123 @@ export default function PreflopPage() {
             行動したポジション
           </h2>
 
-          <div className="mt-3 grid grid-cols-4 gap-2">
-            {tablePositions.map((position) => (
-              <button
-                key={position}
-                type="button"
-                onClick={() =>
-                  setActivePosition(position)
-                }
-                className={`rounded-xl border py-3 font-bold ${
-                  activePosition === position
-                    ? position === heroPosition
-                      ? "border-emerald-500 bg-emerald-500 text-slate-950"
-                      : position === villainPosition
-                        ? "border-sky-400 bg-sky-500 text-slate-950"
-                        : "border-white bg-white text-slate-950"
-                    : "border-slate-700 bg-slate-950"
-                }`}
-              >
-                {position}
-              </button>
-            ))}
+          <div className="mt-4 grid grid-cols-3 gap-2">
+            {tablePositions.map((position) => {
+              const selected =
+                activePosition === position;
+
+              const hero =
+                position === heroPosition;
+
+              const villain =
+                isVillain(position);
+
+              return (
+                <button
+                  key={position}
+                  type="button"
+                  onClick={() =>
+                    selectPosition(position)
+                  }
+                  className={`rounded-xl border py-3 font-bold ${
+                    selected
+                      ? hero
+                        ? "border-emerald-500 bg-emerald-500 text-slate-950"
+                        : villain
+                          ? "border-sky-400 bg-sky-500 text-slate-950"
+                          : "border-white bg-white text-slate-950"
+                      : hero
+                        ? "border-emerald-800 bg-emerald-950/30 text-emerald-300"
+                        : villain
+                          ? "border-sky-900 bg-sky-950/30 text-sky-300"
+                          : "border-slate-700 bg-slate-950"
+                  }`}
+                >
+                  {position}
+                </button>
+              );
+            })}
           </div>
 
-          <p className="mt-3 text-sm text-slate-400">
-            入力中：
-            <span className="ml-1 font-bold text-white">
+          <div className="mt-4 rounded-xl bg-slate-950 p-4">
+            <p className="text-sm text-slate-400">
+              入力中
+            </p>
+
+            <p className="mt-1 text-xl font-bold">
               {actorLabel(activePosition)}
-            </span>
-          </p>
+            </p>
+
+            <p className="mt-2 text-sm text-slate-400">
+              現在の投入額：
+              {formatNumber(activeContribution)}
+            </p>
+
+            {activeStartingStack > 0 && (
+              <p className="mt-1 text-sm text-amber-300">
+                残りスタック：
+                {formatNumber(activeRemainingStack)}
+              </p>
+            )}
+          </div>
+
+          {activePosition !== heroPosition && (
+            <div className="mt-4 rounded-2xl border border-sky-900 bg-sky-950/30 p-4">
+              <p className="text-sm font-bold text-sky-300">
+                対戦相手として登録
+              </p>
+
+              <label
+                htmlFor="villain-stack"
+                className="mt-4 block font-bold"
+              >
+                {activePosition}のスタック
+              </label>
+
+              <input
+                id="villain-stack"
+                inputMode="numeric"
+                value={villainStackInput}
+                onChange={(event) => {
+                  const value =
+                    event.target.value;
+
+                  if (
+                    value === "" ||
+                    /^\d*$/.test(value)
+                  ) {
+                    setVillainStackInput(value);
+                  }
+                }}
+                placeholder="例：65000"
+                className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-xl font-bold outline-none focus:border-sky-400"
+              />
+
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={registerVillain}
+                  className="rounded-xl bg-sky-500 p-3 font-bold text-slate-950"
+                >
+                  {activeVillain
+                    ? "スタックを更新"
+                    : "相手として登録"}
+                </button>
+
+                {activeVillain && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      removeVillain(activePosition)
+                    }
+                    className="rounded-xl border border-red-900 p-3 font-bold text-red-300"
+                  >
+                    登録を解除
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           <h2 className="mt-6 text-lg font-bold">
             アクション
@@ -589,11 +1038,12 @@ export default function PreflopPage() {
                 type="button"
                 onClick={() => {
                   setSelectedAction(option.key);
-                  setMessage("");
 
                   if (!option.needsAmount) {
                     setAmount("");
                   }
+
+                  setMessage("");
                 }}
                 className={`rounded-xl border p-3 text-left ${
                   selectedAction === option.key
@@ -612,21 +1062,47 @@ export default function PreflopPage() {
             ))}
           </div>
 
+          {selectedAction === "All-in" && (
+            <div className="mt-5 rounded-xl border border-amber-800 bg-amber-950/30 p-4">
+              <p className="text-sm text-amber-300">
+                自動計算されるオールイン
+              </p>
+
+              <p className="mt-1 text-xl font-bold">
+                追加 {formatNumber(activeRemainingStack)}
+              </p>
+
+              <p className="mt-1 text-sm text-slate-300">
+                最終投入額：
+                {formatNumber(activeStartingStack)}
+              </p>
+            </div>
+          )}
+
+          {(selectedAction === "Call" ||
+            selectedAction === "Limp") && (
+            <div className="mt-5 rounded-xl border border-slate-700 bg-slate-950 p-4">
+              <p className="text-sm text-slate-400">
+                今回の追加額
+              </p>
+
+              <p className="mt-1 text-xl font-bold text-emerald-400">
+                {formatNumber(previewAddedAmount)}
+              </p>
+            </div>
+          )}
+
           {selectedOption?.needsAmount && (
             <div className="mt-5">
               <label
-                htmlFor="amount"
-                className="mb-2 block font-bold"
+                htmlFor="preflop-amount"
+                className="block font-bold"
               >
-                最終的な金額
+                最終的な投入額
               </label>
 
-              <p className="mb-2 text-sm text-slate-400">
-                実額を入力します。例：250
-              </p>
-
               <input
-                id="amount"
+                id="preflop-amount"
                 inputMode="numeric"
                 value={amount}
                 onChange={(event) => {
@@ -640,53 +1116,28 @@ export default function PreflopPage() {
                     setAmount(value);
                   }
                 }}
-                placeholder="250"
-                className="w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-2xl font-bold outline-none focus:border-emerald-500"
+                placeholder="例：2500"
+                className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-950 p-4 text-2xl font-bold outline-none focus:border-emerald-500"
               />
 
               {amount && (
-                <p className="mt-2 font-bold text-emerald-400">
-                  {formatNumber(amount)}
-                  {enteredBb !== null
-                    ? `（${Number(
+                <div className="mt-3 rounded-xl border border-emerald-900 bg-emerald-950/30 p-4">
+                  <p className="font-bold text-emerald-300">
+                    最終額：
+                    {formatNumber(amount)}
+
+                    {enteredBb !== null &&
+                      `（${Number(
                         enteredBb.toFixed(2),
-                      )}bb）`
-                    : ""}
-                </p>
+                      )}bb）`}
+                  </p>
+
+                  <p className="mt-2 text-sm text-slate-300">
+                    今回の追加額：
+                    {formatNumber(previewAddedAmount)}
+                  </p>
+                </div>
               )}
-            </div>
-          )}
-
-          {(selectedAction === "Call" ||
-            selectedAction === "Limp") && (
-            <div className="mt-5 rounded-xl border border-slate-700 bg-slate-950 p-4">
-              <p className="text-sm text-slate-400">
-                自動入力される金額
-              </p>
-
-              <p className="mt-1 text-xl font-bold text-emerald-400">
-                {selectedAction === "Limp"
-                  ? `${formatNumber(
-                      bigBlind || 0,
-                    )}${
-                      bigBlind
-                        ? "（1bb）"
-                        : ""
-                    }`
-                  : `${formatNumber(
-                      preflopState.highestContribution,
-                    )}${
-                      bigBlind &&
-                      Number(bigBlind) > 0
-                        ? `（${Number(
-                            (
-                              preflopState.highestContribution /
-                              Number(bigBlind)
-                            ).toFixed(2),
-                          )}bb）`
-                        : ""
-                    }`}
-              </p>
             </div>
           )}
 
@@ -721,82 +1172,52 @@ export default function PreflopPage() {
             </p>
           ) : (
             <div className="mt-4 space-y-2">
-              {actions.map((action, index) => {
-                const bb = amountToBb(
-                  action.amount,
-                  bigBlind,
-                );
+              {actions.map((action, index) => (
+                <div
+                  key={action.id}
+                  className="rounded-xl border border-slate-800 bg-slate-950 p-3"
+                >
+                  <p className="font-bold">
+                    {index + 1}.{" "}
+                    {actorLabel(action.position)}
+                  </p>
 
-                return (
-                  <div
-                    key={action.id}
-                    className={`rounded-xl border p-3 ${
-                      action.position ===
-                      heroPosition
-                        ? "border-emerald-800 bg-emerald-950/30"
-                        : action.position ===
-                            villainPosition
-                          ? "border-sky-900 bg-sky-950/30"
-                          : "border-slate-800 bg-slate-950"
-                    }`}
-                  >
-                    <p className="text-sm font-bold">
-                      {index + 1}.{" "}
-                      {actorLabel(
-                        action.position,
-                      )}
-                    </p>
+                  <p className="mt-1 text-sm text-slate-300">
+                    {
+                      actionOptions.find(
+                        (option) =>
+                          option.key === action.action,
+                      )?.label
+                    }
 
-                    <p className="mt-1 text-sm text-slate-300">
-                      {
-                        actionOptions.find(
-                          (option) =>
-                            option.key ===
-                            action.action,
-                        )?.label
-                      }
+                    {action.amount &&
+                      ` ${formatNumber(action.amount)}`}
 
-                      {action.amount &&
-                        ` ${formatNumber(
-                          action.amount,
-                        )}`}
-
-                      {bb !== null &&
-                        `（${Number(
-                          bb.toFixed(2),
-                        )}bb）`}
-                    </p>
-                  </div>
-                );
-              })}
+                    {action.addedAmount > 0 &&
+                      `（追加 ${formatNumber(
+                        action.addedAmount,
+                      )}）`}
+                  </p>
+                </div>
+              ))}
             </div>
           )}
         </section>
 
         {message && (
-          <p className="mt-4 rounded-xl border border-slate-700 bg-slate-900 p-4 text-sm">
+          <p className="mt-4 rounded-xl border border-red-900 bg-red-950/40 p-4 text-sm text-red-200">
             {message}
           </p>
         )}
 
         <div className="mt-6 space-y-3">
-          <Link
-            href={
-              actions.length > 0 ? "/flop" : "#"
-            }
-            onClick={(event) => {
-              if (!savePreflop()) {
-                event.preventDefault();
-              }
-            }}
-            className={`block w-full rounded-2xl p-5 text-center text-lg font-bold ${
-              actions.length > 0
-                ? "bg-emerald-500 text-slate-950 active:scale-95"
-                : "cursor-not-allowed bg-slate-800 text-slate-500"
-            }`}
+          <button
+            type="button"
+            onClick={savePreflop}
+            className="w-full rounded-2xl bg-emerald-500 p-5 text-lg font-bold text-slate-950 active:scale-95"
           >
             保存してフロップへ
-          </Link>
+          </button>
 
           <button
             type="button"
