@@ -1,7 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import BottomNav from "@/components/BottomNav";
 import { useEffect, useMemo, useState } from "react";
+
+type ResultFilter = "all" | "win" | "lose" | "chop";
+type ReviewFilter = "all" | "reviewed" | "unreviewed";
 
 type Card = {
   rank?: string;
@@ -47,7 +51,6 @@ type ShowdownPlayer = {
 type StoredHand = {
   id: string;
   savedAt: string;
-
   table?: {
     venue?: string;
     tableName?: string;
@@ -55,29 +58,24 @@ type StoredHand = {
     bigBlind?: string;
     heroStack?: string;
   };
-
   positions?: {
     heroPosition?: string;
     villainPosition?: string;
     villains?: Villain[];
   };
-
   heroHand?: {
     firstCard?: Card;
     secondCard?: Card;
     notation?: string;
   };
-
   preflop?: {
     endingPot?: number;
     villains?: Villain[];
     actions?: StoredAction[];
   };
-
   flop?: StoredStreet;
   turn?: StoredStreet;
   river?: StoredStreet;
-
   result?: {
     type?: "win" | "lose" | "chop";
     label?: string;
@@ -85,8 +83,6 @@ type StoredHand = {
     showdownPlayers?: ShowdownPlayer[];
     importance?: number;
     memo?: string;
-
-    // 旧データとの互換用
     villainHand?: {
       firstCard?: Card;
       secondCard?: Card;
@@ -95,78 +91,72 @@ type StoredHand = {
   };
 };
 
+type CachedReview = {
+  totalScore?: number;
+  grade?: string;
+  stars?: number;
+};
+
+const reviewCacheKey = "poker-read-ai-review-cache";
+
+const resultFilters: { key: ResultFilter; label: string }[] = [
+  { key: "all", label: "すべて" },
+  { key: "win", label: "勝ち" },
+  { key: "lose", label: "負け" },
+  { key: "chop", label: "チョップ" },
+];
+
 function safeParseHands(): StoredHand[] {
-  const saved = localStorage.getItem(
-    "poker-read-hands",
-  );
-
-  if (!saved) {
-    return [];
-  }
-
+  const saved = localStorage.getItem("poker-read-hands");
+  if (!saved) return [];
   try {
     const parsed = JSON.parse(saved);
-
-    return Array.isArray(parsed)
-      ? parsed
-      : [];
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
 }
 
-function cardText(card?: Card | null) {
-  if (!card?.rank || !card?.suit) {
-    return "?";
+function safeParseReviewCache(): Record<string, CachedReview> {
+  const saved = localStorage.getItem(reviewCacheKey);
+  if (!saved) return {};
+  try {
+    const parsed = JSON.parse(saved);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
   }
+}
 
+function cardText(card?: Card | null) {
+  if (!card?.rank || !card?.suit) return "?";
   return `${card.rank}${card.suit}`;
 }
 
 function boardText(street?: StoredStreet) {
-  if (!street?.board?.length) {
-    return "";
-  }
-
-  return street.board
-    .map(cardText)
-    .join(" ");
+  if (!street?.board?.length) return "";
+  return street.board.map(cardText).join(" ");
 }
 
 function formatDate(dateText: string) {
   const date = new Date(dateText);
-
-  if (Number.isNaN(date.getTime())) {
-    return dateText;
-  }
-
-  return new Intl.DateTimeFormat(
-    "ja-JP",
-    {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    },
-  ).format(date);
+  if (Number.isNaN(date.getTime())) return dateText;
+  return new Intl.DateTimeFormat("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
-function formatNumber(
-  value?: string | number,
-) {
+function formatNumber(value?: string | number) {
   const number = Number(value);
-
-  if (!Number.isFinite(number)) {
-    return value ?? "";
-  }
-
+  if (!Number.isFinite(number)) return value ?? "";
   return number.toLocaleString("ja-JP");
 }
 
-function actionJapanese(
-  action?: string,
-) {
+function actionJapanese(action?: string) {
   const labels: Record<string, string> = {
     Fold: "フォールド",
     Check: "チェック",
@@ -180,139 +170,75 @@ function actionJapanese(
     Raise: "レイズ",
     "All-in": "オールイン",
   };
-
-  return action
-    ? labels[action] ?? action
-    : "不明";
+  return action ? labels[action] ?? action : "不明";
 }
 
 function resultStyle(type?: string) {
   if (type === "win") {
     return {
       label: "勝ち",
-      className:
-        "border-emerald-800 bg-emerald-950/40 text-emerald-300",
+      chip: "border-emerald-700 bg-emerald-400 text-emerald-950",
+      glow: "shadow-emerald-950/50",
     };
   }
-
   if (type === "lose") {
     return {
       label: "負け",
-      className:
-        "border-red-900 bg-red-950/40 text-red-300",
+      chip: "border-red-700 bg-red-500 text-white",
+      glow: "shadow-red-950/40",
     };
   }
-
   return {
     label: "チョップ",
-    className:
-      "border-amber-800 bg-amber-950/40 text-amber-300",
+    chip: "border-amber-600 bg-amber-300 text-amber-950",
+    glow: "shadow-amber-950/40",
   };
 }
 
-function getVillains(
-  hand: StoredHand,
-) {
-  if (
-    Array.isArray(
-      hand.preflop?.villains,
-    ) &&
-    hand.preflop!.villains!.length >
-      0
-  ) {
-    return hand.preflop!.villains!;
+function getVillains(hand: StoredHand): Villain[] {
+  if (Array.isArray(hand.preflop?.villains) && hand.preflop.villains.length > 0) {
+    return hand.preflop.villains;
   }
-
-  if (
-    Array.isArray(
-      hand.positions?.villains,
-    )
-  ) {
-    return hand.positions!.villains!;
+  if (Array.isArray(hand.positions?.villains)) return hand.positions.villains;
+  if (hand.positions?.villainPosition) {
+    return [{ position: hand.positions.villainPosition, stack: "" }];
   }
-
-  if (
-    hand.positions?.villainPosition
-  ) {
-    return [
-      {
-        position:
-          hand.positions
-            .villainPosition,
-        stack: "",
-      },
-    ];
-  }
-
   return [];
 }
 
-function getShowdownPlayers(
-  hand: StoredHand,
-): ShowdownPlayer[] {
-  if (
-    Array.isArray(
-      hand.result?.showdownPlayers,
-    )
-  ) {
-    return hand.result!
-      .showdownPlayers!;
+function getShowdownPlayers(hand: StoredHand): ShowdownPlayer[] {
+  if (Array.isArray(hand.result?.showdownPlayers)) {
+    return hand.result.showdownPlayers;
   }
-
-  if (
-    hand.result?.villainHand
-  ) {
-    return [
-      {
-        position:
-          hand.positions
-            ?.villainPosition ??
-          "相手",
-        handKnown: true,
-        firstCard:
-          hand.result.villainHand
-            .firstCard,
-        secondCard:
-          hand.result.villainHand
-            .secondCard,
-        handText:
-          hand.result.villainHand
-            .text,
-      },
-    ];
+  if (hand.result?.villainHand) {
+    return [{
+      position: hand.positions?.villainPosition ?? "相手",
+      handKnown: true,
+      firstCard: hand.result.villainHand.firstCard,
+      secondCard: hand.result.villainHand.secondCard,
+      handText: hand.result.villainHand.text,
+    }];
   }
-
   return [];
 }
 
-function actorLabel(
-  action: StoredAction,
-  hand: StoredHand,
-) {
-  const heroPosition =
-    hand.positions?.heroPosition;
+function heroHandText(hand: StoredHand) {
+  return (
+    hand.heroHand?.notation ||
+    `${cardText(hand.heroHand?.firstCard)} ${cardText(hand.heroHand?.secondCard)}`
+  );
+}
 
+function actorLabel(action: StoredAction, hand: StoredHand) {
+  const heroPosition = hand.positions?.heroPosition;
   if (
     action.role === "hero" ||
     action.actor === "hero" ||
     action.position === heroPosition
   ) {
-    return `自分${
-      action.position
-        ? `（${action.position}）`
-        : heroPosition
-          ? `（${heroPosition}）`
-          : ""
-    }`;
+    return `自分${action.position ? `（${action.position}）` : heroPosition ? `（${heroPosition}）` : ""}`;
   }
-
-  if (
-    action.position
-  ) {
-    return `相手（${action.position}）`;
-  }
-
-  return "相手";
+  return action.position ? `相手（${action.position}）` : "相手";
 }
 
 function ActionList({
@@ -325,84 +251,37 @@ function ActionList({
   hand: StoredHand;
 }) {
   return (
-    <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-      <h4 className="font-bold">
-        {title}
-      </h4>
-
+    <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
+      <h4 className="font-black">{title}</h4>
       {!actions?.length ? (
-        <p className="mt-2 text-sm text-slate-500">
-          アクションなし
-        </p>
+        <p className="mt-2 text-sm text-white/35">アクションなし</p>
       ) : (
         <div className="mt-3 space-y-2">
-          {actions.map(
-            (action, index) => (
-              <div
-                key={
-                  action.id ??
-                  `${title}-${index}`
-                }
-                className="rounded-xl bg-slate-900 p-3"
-              >
-                <p className="text-sm font-bold">
-                  {index + 1}.{" "}
-                  {actorLabel(
-                    action,
-                    hand,
-                  )}
-                </p>
-
-                <p className="mt-1 text-sm text-slate-300">
-                  {actionJapanese(
-                    action.action,
-                  )}
-
-                  {action.amount
-                    ? ` ${formatNumber(
-                        action.amount,
-                      )}`
-                    : ""}
-
-                  {typeof action.addedAmount ===
-                    "number" &&
-                  action.addedAmount > 0
-                    ? `（追加 ${formatNumber(
-                        action.addedAmount,
-                      )}`
-                    : ""}
-
-                  {typeof action.potPercent ===
-                    "number" &&
-                  action.addedAmount &&
-                  action.addedAmount > 0
-                    ? ` / ${Math.round(
-                        action.potPercent,
-                      )}% Pot`
-                    : ""}
-
-                  {typeof action.addedAmount ===
-                    "number" &&
-                  action.addedAmount > 0
-                    ? "）"
-                    : ""}
-                </p>
-
-                {typeof action.potBefore ===
-                  "number" &&
-                  typeof action.addedAmount ===
-                    "number" && (
-                    <p className="mt-1 text-xs text-slate-500">
-                      アクション後ポット：
-                      {formatNumber(
-                        action.potBefore +
-                          action.addedAmount,
-                      )}
-                    </p>
-                  )}
-              </div>
-            ),
-          )}
+          {actions.map((action, index) => (
+            <div
+              key={action.id ?? `${title}-${index}`}
+              className="rounded-xl border border-white/5 bg-white/5 p-3"
+            >
+              <p className="text-sm font-black">
+                {index + 1}. {actorLabel(action, hand)}
+              </p>
+              <p className="mt-1 text-sm text-white/70">
+                {actionJapanese(action.action)}
+                {action.amount ? ` ${formatNumber(action.amount)}` : ""}
+                {typeof action.addedAmount === "number" && action.addedAmount > 0
+                  ? `（追加 ${formatNumber(action.addedAmount)}`
+                  : ""}
+                {typeof action.potPercent === "number" &&
+                action.addedAmount &&
+                action.addedAmount > 0
+                  ? ` / ${Math.round(action.potPercent)}% Pot`
+                  : ""}
+                {typeof action.addedAmount === "number" && action.addedAmount > 0
+                  ? "）"
+                  : ""}
+              </p>
+            </div>
+          ))}
         </div>
       )}
     </section>
@@ -417,224 +296,277 @@ function StreetSummary({
   street?: StoredStreet;
 }) {
   return (
-    <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-      <h3 className="font-bold">
-        {title}
-      </h3>
-
-      <p className="mt-2 text-xl font-bold">
-        {boardText(street) ||
-          "未入力"}
-      </p>
-
-      <p className="mt-3 text-sm text-slate-400">
-        開始ポット：
-        {formatNumber(
-          street?.startingPot,
-        ) || "不明"}
-      </p>
-
-      <p className="mt-1 text-sm text-slate-400">
-        終了ポット：
-        {formatNumber(
-          street?.endingPot,
-        ) || "不明"}
-      </p>
+    <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
+      <h3 className="font-black">{title}</h3>
+      <p className="mt-2 text-xl font-black">{boardText(street) || "未入力"}</p>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+        <div className="rounded-xl bg-white/5 p-3">
+          <p className="text-xs text-white/40">開始ポット</p>
+          <p className="mt-1 font-bold">{formatNumber(street?.startingPot) || "不明"}</p>
+        </div>
+        <div className="rounded-xl bg-white/5 p-3">
+          <p className="text-xs text-white/40">終了ポット</p>
+          <p className="mt-1 font-bold">{formatNumber(street?.endingPot) || "不明"}</p>
+        </div>
+      </div>
     </section>
   );
 }
 
 export default function HistoryPage() {
-  const [hands, setHands] =
-    useState<StoredHand[]>([]);
-
-  const [openHandId, setOpenHandId] =
-    useState<string | null>(null);
-
-  const [loaded, setLoaded] =
-    useState(false);
+  const [hands, setHands] = useState<StoredHand[]>([]);
+  const [reviewCache, setReviewCache] = useState<Record<string, CachedReview>>({});
+  const [openHandId, setOpenHandId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [resultFilter, setResultFilter] = useState<ResultFilter>("all");
+  const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
+  const [positionFilter, setPositionFilter] = useState("all");
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     setHands(safeParseHands());
+    setReviewCache(safeParseReviewCache());
     setLoaded(true);
   }, []);
 
-  const totalWins = useMemo(
+  const positions = useMemo(
     () =>
-      hands.filter(
-        (hand) =>
-          hand.result?.type ===
-          "win",
-      ).length,
+      Array.from(
+        new Set(
+          hands
+            .map((hand) => hand.positions?.heroPosition)
+            .filter((value): value is string => Boolean(value)),
+        ),
+      ),
     [hands],
   );
 
-  function deleteHand(
-    handId: string,
-  ) {
-    const confirmed =
-      window.confirm(
-        "このハンドを削除しますか？",
-      );
+  const filteredHands = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
 
-    if (!confirmed) {
-      return;
-    }
+    return hands.filter((hand) => {
+      const villains = getVillains(hand);
+      const review = reviewCache[hand.id];
+      const searchableText = [
+        heroHandText(hand),
+        hand.positions?.heroPosition,
+        hand.table?.venue,
+        hand.table?.tableName,
+        ...villains.map((villain) => villain.position),
+        hand.result?.memo,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
 
-    const nextHands =
-      hands.filter(
-        (hand) =>
-          hand.id !== handId,
-      );
+      const matchesSearch = !keyword || searchableText.includes(keyword);
+      const matchesResult =
+        resultFilter === "all" || hand.result?.type === resultFilter;
+      const matchesReview =
+        reviewFilter === "all" ||
+        (reviewFilter === "reviewed" && Boolean(review)) ||
+        (reviewFilter === "unreviewed" && !review);
+      const matchesPosition =
+        positionFilter === "all" ||
+        hand.positions?.heroPosition === positionFilter;
 
+      return matchesSearch && matchesResult && matchesReview && matchesPosition;
+    });
+  }, [hands, positionFilter, resultFilter, reviewCache, reviewFilter, search]);
+
+  const totalWins = useMemo(
+    () => hands.filter((hand) => hand.result?.type === "win").length,
+    [hands],
+  );
+
+  const reviewedCount = useMemo(
+    () => hands.filter((hand) => Boolean(reviewCache[hand.id])).length,
+    [hands, reviewCache],
+  );
+
+  function deleteHand(handId: string) {
+    if (!window.confirm("このハンドを削除しますか？")) return;
+
+    const nextHands = hands.filter((hand) => hand.id !== handId);
     setHands(nextHands);
+    localStorage.setItem("poker-read-hands", JSON.stringify(nextHands));
 
-    localStorage.setItem(
-      "poker-read-hands",
-      JSON.stringify(nextHands),
-    );
+    const nextCache = { ...reviewCache };
+    delete nextCache[handId];
+    setReviewCache(nextCache);
+    localStorage.setItem(reviewCacheKey, JSON.stringify(nextCache));
 
-    if (openHandId === handId) {
-      setOpenHandId(null);
-    }
+    if (openHandId === handId) setOpenHandId(null);
   }
 
   function deleteAllHands() {
-    const confirmed =
-      window.confirm(
-        "保存したハンドをすべて削除しますか？この操作は元に戻せません。",
-      );
-
-    if (!confirmed) {
+    if (!window.confirm("保存したハンドをすべて削除しますか？この操作は元に戻せません。")) {
       return;
     }
-
-    localStorage.removeItem(
-      "poker-read-hands",
-    );
-
+    localStorage.removeItem("poker-read-hands");
+    localStorage.removeItem(reviewCacheKey);
     setHands([]);
+    setReviewCache({});
     setOpenHandId(null);
   }
 
   if (!loaded) {
     return (
-      <main className="min-h-screen bg-slate-950 p-6 text-white">
-        読み込み中...
-      </main>
+      <main className="min-h-screen bg-[#07150f] p-6 text-white">読み込み中...</main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 px-4 py-6 text-white">
+    <main className="min-h-screen bg-[#07150f] px-4 py-7 text-white">
       <div className="mx-auto max-w-md">
         <header className="mb-6">
-          <Link
-            href="/"
-            className="mb-5 inline-block text-sm font-semibold text-slate-400"
-          >
+          <Link href="/" className="text-sm font-bold text-emerald-300">
             ← ホームへ戻る
           </Link>
 
-          <p className="mb-2 text-sm font-bold text-emerald-400">
-            HAND HISTORY
+          <p className="mt-6 text-xs font-black tracking-[0.2em] text-sky-300">
+            ♣ HAND HISTORY
           </p>
 
-          <h1 className="text-3xl font-bold">
-            保存したハンド
-          </h1>
+          <h1 className="mt-2 text-3xl font-black">ハンド履歴</h1>
 
-          <p className="mt-2 text-sm leading-6 text-slate-400">
-            ハンドを開くと、複数の相手と各ストリートの行動を確認できます。
+          <p className="mt-2 text-sm leading-7 text-white/55">
+            保存したハンドを検索・絞り込みして、いつでも復習できます。
           </p>
         </header>
 
-        <section className="mb-5 grid grid-cols-3 gap-3">
-          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
-            <p className="text-xs text-slate-400">
-              保存
-            </p>
-
-            <p className="mt-1 text-2xl font-bold">
-              {hands.length}
-            </p>
+        <section className="grid grid-cols-3 gap-3">
+          <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
+            <p className="text-xs text-white/40">保存</p>
+            <p className="mt-1 text-2xl font-black">{hands.length}</p>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
-            <p className="text-xs text-slate-400">
-              勝ち
-            </p>
-
-            <p className="mt-1 text-2xl font-bold text-emerald-400">
-              {totalWins}
-            </p>
+          <div className="rounded-3xl border border-emerald-900 bg-emerald-950/30 p-4">
+            <p className="text-xs text-emerald-300">勝ち</p>
+            <p className="mt-1 text-2xl font-black text-emerald-300">{totalWins}</p>
           </div>
 
-          <Link
-            href="/new-hand"
-            className="rounded-2xl bg-emerald-500 p-4 font-bold text-slate-950 active:scale-95"
-          >
-            <span className="block text-xs">
-              NEW
-            </span>
-
-            <span className="mt-1 block">
-              新規
-            </span>
-          </Link>
+          <div className="rounded-3xl border border-amber-900 bg-amber-950/30 p-4">
+            <p className="text-xs text-amber-300">レビュー済</p>
+            <p className="mt-1 text-2xl font-black text-amber-300">{reviewedCount}</p>
+          </div>
         </section>
 
-        {hands.length === 0 ? (
-          <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-center">
-            <p className="text-lg font-bold">
-              保存したハンドはありません
-            </p>
+        <Link
+          href="/new-hand"
+          className="mt-4 flex items-center justify-between rounded-3xl bg-gradient-to-r from-emerald-400 to-lime-300 p-5 font-black text-slate-950 shadow-lg shadow-emerald-950/50"
+        >
+          <span>♠ 新しいハンドを記録</span>
+          <span className="text-2xl">›</span>
+        </Link>
 
-            <p className="mt-2 text-sm leading-6 text-slate-400">
+        {hands.length > 0 && (
+          <section className="mt-5 rounded-3xl border border-white/10 bg-white/5 p-5">
+            <label htmlFor="history-search" className="font-black">
+              ハンドを検索
+            </label>
+
+            <input
+              id="history-search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="例：AKs、BTN、CO、店舗名"
+              className="mt-3 w-full rounded-2xl border border-white/10 bg-black/30 p-4 outline-none focus:border-emerald-400"
+            />
+
+            <p className="mt-5 text-xs font-black text-white/45">勝敗</p>
+            <div className="mt-2 grid grid-cols-4 gap-2">
+              {resultFilters.map((filter) => (
+                <button
+                  key={filter.key}
+                  type="button"
+                  onClick={() => setResultFilter(filter.key)}
+                  className={`rounded-xl border px-2 py-3 text-sm font-bold ${
+                    resultFilter === filter.key
+                      ? "border-emerald-400 bg-emerald-400 text-slate-950"
+                      : "border-white/10 bg-black/20 text-white/65"
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="position-filter" className="text-xs font-black text-white/45">
+                  ポジション
+                </label>
+                <select
+                  id="position-filter"
+                  value={positionFilter}
+                  onChange={(event) => setPositionFilter(event.target.value)}
+                  className="mt-2 w-full rounded-xl border border-white/10 bg-black/30 p-3"
+                >
+                  <option value="all">すべて</option>
+                  {positions.map((position) => (
+                    <option key={position} value={position}>
+                      {position}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="review-filter" className="text-xs font-black text-white/45">
+                  AIレビュー
+                </label>
+                <select
+                  id="review-filter"
+                  value={reviewFilter}
+                  onChange={(event) => setReviewFilter(event.target.value as ReviewFilter)}
+                  className="mt-2 w-full rounded-xl border border-white/10 bg-black/30 p-3"
+                >
+                  <option value="all">すべて</option>
+                  <option value="reviewed">レビュー済み</option>
+                  <option value="unreviewed">未レビュー</option>
+                </select>
+              </div>
+            </div>
+
+            <p className="mt-4 text-sm text-white/45">
+              {filteredHands.length}件を表示
+            </p>
+          </section>
+        )}
+
+        {hands.length === 0 ? (
+          <section className="mt-5 rounded-3xl border border-white/10 bg-white/5 p-7 text-center">
+            <p className="text-lg font-black">保存したハンドはありません</p>
+            <p className="mt-2 text-sm leading-6 text-white/45">
               ハンドを記録すると、ここに表示されます。
             </p>
-
-            <Link
-              href="/new-hand"
-              className="mt-5 block rounded-xl bg-emerald-500 p-4 font-bold text-slate-950"
+          </section>
+        ) : filteredHands.length === 0 ? (
+          <section className="mt-5 rounded-3xl border border-white/10 bg-white/5 p-7 text-center">
+            <p className="font-black">条件に合うハンドがありません</p>
+            <button
+              type="button"
+              onClick={() => {
+                setSearch("");
+                setResultFilter("all");
+                setReviewFilter("all");
+                setPositionFilter("all");
+              }}
+              className="mt-4 rounded-xl border border-emerald-700 px-4 py-3 font-bold text-emerald-300"
             >
-              最初のハンドを記録
-            </Link>
+              絞り込みをクリア
+            </button>
           </section>
         ) : (
-          <div className="space-y-4">
-            {hands.map((hand) => {
-              const style =
-                resultStyle(
-                  hand.result?.type,
-                );
-
-              const isOpen =
-                openHandId === hand.id;
-
-              const importance =
-                hand.result?.importance ??
-                1;
-
-              const villains =
-                getVillains(hand);
-
-              const showdownPlayers =
-                getShowdownPlayers(
-                  hand,
-                );
-
-              const heroHandText =
-                hand.heroHand
-                  ?.notation ||
-                `${cardText(
-                  hand.heroHand
-                    ?.firstCard,
-                )} ${cardText(
-                  hand.heroHand
-                    ?.secondCard,
-                )}`;
-
+          <div className="mt-5 space-y-4">
+            {filteredHands.map((hand) => {
+              const style = resultStyle(hand.result?.type);
+              const isOpen = openHandId === hand.id;
+              const importance = hand.result?.importance ?? 1;
+              const villains = getVillains(hand);
+              const showdownPlayers = getShowdownPlayers(hand);
+              const cachedReview = reviewCache[hand.id];
               const fullBoard = [
                 boardText(hand.flop),
                 boardText(hand.turn),
@@ -646,333 +578,172 @@ export default function HistoryPage() {
               return (
                 <article
                   key={hand.id}
-                  className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900"
+                  className={`overflow-hidden rounded-[28px] border border-white/10 bg-gradient-to-br from-[#10271c] to-[#08130e] shadow-xl ${style.glow}`}
                 >
                   <button
                     type="button"
-                    onClick={() =>
-                      setOpenHandId(
-                        isOpen
-                          ? null
-                          : hand.id,
-                      )
-                    }
+                    onClick={() => setOpenHandId(isOpen ? null : hand.id)}
                     className="w-full p-5 text-left"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="text-amber-300">
-                          {"★".repeat(
-                            importance,
-                          )}
-                          {"☆".repeat(
-                            Math.max(
-                              0,
-                              5 -
-                                importance,
-                            ),
-                          )}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <span className="text-2xl">♠</span>
+                          <h2 className="text-3xl font-black">{heroHandText(hand)}</h2>
+                        </div>
 
-                        <h2 className="mt-2 text-2xl font-bold">
-                          {heroHandText ||
-                            "不明"}
-                        </h2>
+                        <p className="mt-2 font-black text-emerald-300">
+                          {hand.positions?.heroPosition ?? "位置不明"}
+                        </p>
                       </div>
 
-                      <span
-                        className={`rounded-full border px-3 py-1 text-sm font-bold ${style.className}`}
-                      >
+                      <span className={`rounded-full border px-3 py-1 text-sm font-black ${style.chip}`}>
                         {style.label}
                       </span>
                     </div>
 
-                    <p className="mt-3 font-bold text-emerald-300">
-                      自分：
-                      {hand.positions
-                        ?.heroPosition ??
-                        "不明"}
-                    </p>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-bold text-white/65">
+                        相手 {villains.length}人
+                      </span>
 
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {villains.length >
-                      0 ? (
-                        villains.map(
-                          (
-                            villain,
-                            index,
-                          ) => (
-                            <span
-                              key={
-                                villain.id ??
-                                `${villain.position}-${index}`
-                              }
-                              className="rounded-full border border-sky-900 bg-sky-950/30 px-3 py-1 text-xs font-bold text-sky-300"
-                            >
-                              相手：
-                              {villain.position ??
-                                "不明"}
-                            </span>
-                          ),
-                        )
+                      <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-bold text-white/65">
+                        {"★".repeat(importance)}
+                        {"☆".repeat(Math.max(0, 5 - importance))}
+                      </span>
+
+                      {cachedReview ? (
+                        <span className="rounded-full border border-amber-700 bg-amber-300 px-3 py-1 text-xs font-black text-amber-950">
+                          🤖 {cachedReview.totalScore ?? "-"}点 {cachedReview.grade ?? ""}
+                        </span>
                       ) : (
-                        <span className="text-sm text-slate-500">
-                          相手情報なし
+                        <span className="rounded-full border border-sky-800 bg-sky-950/40 px-3 py-1 text-xs font-black text-sky-300">
+                          AI未レビュー
                         </span>
                       )}
                     </div>
 
-                    <p className="mt-3 text-sm text-slate-400">
-                      {hand.table?.venue ||
-                        "開催場所未入力"}
-
-                      {hand.table
-                        ?.tableName
-                        ? ` / ${hand.table.tableName}`
-                        : ""}
-                    </p>
-
-                    <p className="mt-1 text-sm text-slate-500">
-                      SB / BB：
-                      {hand.table
-                        ?.smallBlind ??
-                        "?"}
-                      {" / "}
-                      {hand.table
-                        ?.bigBlind ??
-                        "?"}
-                    </p>
-
                     {fullBoard && (
-                      <p className="mt-3 rounded-xl bg-slate-950 p-3 text-lg font-bold">
-                        {fullBoard}
-                      </p>
+                      <div className="mt-4 rounded-2xl border border-white/5 bg-black/25 p-3">
+                        <p className="text-xs text-white/35">ボード</p>
+                        <p className="mt-1 text-lg font-black">{fullBoard}</p>
+                      </div>
                     )}
 
-                    <p className="mt-3 text-xs text-slate-500">
-                      {formatDate(
-                        hand.savedAt,
-                      )}
-                    </p>
-
-                    <p className="mt-3 text-center text-sm font-bold text-emerald-400">
-                      {isOpen
-                        ? "詳細を閉じる ▲"
-                        : "詳細を見る ▼"}
-                    </p>
+                    <div className="mt-4 flex items-center justify-between">
+                      <p className="text-xs text-white/35">{formatDate(hand.savedAt)}</p>
+                      <p className="text-sm font-black text-emerald-300">
+                        {isOpen ? "詳細を閉じる ▲" : "詳細を見る ▼"}
+                      </p>
+                    </div>
                   </button>
 
                   {isOpen && (
-                    <div className="space-y-4 border-t border-slate-800 p-5">
-                      <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-                        <h3 className="font-bold">
-                          ハンド情報
-                        </h3>
+                    <div className="space-y-4 border-t border-white/10 p-5">
+                      <section className="grid grid-cols-2 gap-3">
+                        <div className="rounded-2xl border border-emerald-900 bg-emerald-950/30 p-4">
+                          <p className="text-xs text-emerald-300">自分のハンド</p>
+                          <p className="mt-2 text-xl font-black">{heroHandText(hand)}</p>
+                        </div>
 
-                        <p className="mt-3 text-sm">
-                          自分：
-                          <span className="ml-2 font-bold text-emerald-400">
-                            {cardText(
-                              hand.heroHand
-                                ?.firstCard,
-                            )}
-                            {" "}
-                            {cardText(
-                              hand.heroHand
-                                ?.secondCard,
-                            )}
-                          </span>
-                        </p>
-
-                        <p className="mt-2 text-sm text-slate-400">
-                          自分のスタック：
-                          <span className="ml-1 font-bold text-white">
-                            {formatNumber(
-                              hand.table
-                                ?.heroStack,
-                            ) ||
-                              "不明"}
-                          </span>
-                        </p>
+                        <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                          <p className="text-xs text-white/40">スタック</p>
+                          <p className="mt-2 text-xl font-black">
+                            {formatNumber(hand.table?.heroStack) || "不明"}
+                          </p>
+                        </div>
                       </section>
 
                       <section className="rounded-2xl border border-sky-900 bg-sky-950/20 p-4">
-                        <h3 className="font-bold text-sky-300">
-                          対戦相手
-                        </h3>
-
-                        {villains.length ===
-                        0 ? (
-                          <p className="mt-2 text-sm text-slate-500">
-                            相手情報なし
-                          </p>
+                        <h3 className="font-black text-sky-300">対戦相手</h3>
+                        {villains.length === 0 ? (
+                          <p className="mt-2 text-sm text-white/35">相手情報なし</p>
                         ) : (
                           <div className="mt-3 space-y-2">
-                            {villains.map(
-                              (
-                                villain,
-                                index,
-                              ) => (
-                                <div
-                                  key={
-                                    villain.id ??
-                                    `${villain.position}-${index}`
-                                  }
-                                  className="rounded-xl bg-slate-950 p-3"
-                                >
-                                  <p className="font-bold text-sky-300">
-                                    {villain.position ??
-                                      "不明"}
-                                  </p>
-
-                                  <p className="mt-1 text-sm text-slate-300">
-                                    スタック：
-                                    {formatNumber(
-                                      villain.stack,
-                                    ) ||
-                                      "不明"}
-                                  </p>
-                                </div>
-                              ),
-                            )}
+                            {villains.map((villain, index) => (
+                              <div
+                                key={villain.id ?? `${villain.position}-${index}`}
+                                className="rounded-xl bg-black/20 p-3"
+                              >
+                                <p className="font-black text-sky-300">
+                                  {villain.position ?? "不明"}
+                                </p>
+                                <p className="mt-1 text-sm text-white/65">
+                                  スタック：{formatNumber(villain.stack) || "不明"}
+                                </p>
+                              </div>
+                            ))}
                           </div>
                         )}
                       </section>
 
-                      <ActionList
-                        title="プリフロップ"
-                        actions={
-                          hand.preflop
-                            ?.actions
-                        }
-                        hand={hand}
-                      />
+                      <ActionList title="プリフロップ" actions={hand.preflop?.actions} hand={hand} />
+                      <StreetSummary title="フロップ" street={hand.flop} />
+                      <ActionList title="フロップのアクション" actions={hand.flop?.actions} hand={hand} />
+                      <StreetSummary title="ターン" street={hand.turn} />
+                      <ActionList title="ターンのアクション" actions={hand.turn?.actions} hand={hand} />
+                      <StreetSummary title="リバー" street={hand.river} />
+                      <ActionList title="リバーのアクション" actions={hand.river?.actions} hand={hand} />
 
-                      <StreetSummary
-                        title="フロップ"
-                        street={hand.flop}
-                      />
-
-                      <ActionList
-                        title="フロップのアクション"
-                        actions={
-                          hand.flop
-                            ?.actions
-                        }
-                        hand={hand}
-                      />
-
-                      <StreetSummary
-                        title="ターン"
-                        street={hand.turn}
-                      />
-
-                      <ActionList
-                        title="ターンのアクション"
-                        actions={
-                          hand.turn
-                            ?.actions
-                        }
-                        hand={hand}
-                      />
-
-                      <StreetSummary
-                        title="リバー"
-                        street={hand.river}
-                      />
-
-                      <ActionList
-                        title="リバーのアクション"
-                        actions={
-                          hand.river
-                            ?.actions
-                        }
-                        hand={hand}
-                      />
-
-                      <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-                        <h3 className="font-bold">
-                          ショーダウン
-                        </h3>
-
+                      <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                        <h3 className="font-black">ショーダウン</h3>
                         <p className="mt-2 text-sm">
-                          {hand.result
-                            ?.showdown ===
-                          "yes"
-                            ? "あり"
-                            : "なし"}
+                          {hand.result?.showdown === "yes" ? "あり" : "なし"}
                         </p>
 
-                        {hand.result
-                          ?.showdown ===
-                          "yes" && (
+                        {hand.result?.showdown === "yes" && (
                           <div className="mt-3 space-y-2">
-                            {showdownPlayers.length >
-                            0 ? (
-                              showdownPlayers.map(
-                                (
-                                  player,
-                                  index,
-                                ) => (
-                                  <div
-                                    key={
-                                      player.id ??
-                                      `${player.position}-${index}`
-                                    }
-                                    className="rounded-xl border border-sky-900 bg-sky-950/20 p-3"
-                                  >
-                                    <p className="font-bold text-sky-300">
-                                      {player.position ??
-                                        "相手"}
-                                    </p>
-
-                                    <p className="mt-1 text-sm text-slate-300">
-                                      ハンド：
-                                      {player.handKnown
-                                        ? player.handText ||
-                                          `${cardText(
-                                            player.firstCard,
-                                          )} ${cardText(
-                                            player.secondCard,
-                                          )}`
-                                        : "不明"}
-                                    </p>
-                                  </div>
-                                ),
-                              )
+                            {showdownPlayers.length > 0 ? (
+                              showdownPlayers.map((player, index) => (
+                                <div
+                                  key={player.id ?? `${player.position}-${index}`}
+                                  className="rounded-xl border border-sky-900 bg-sky-950/20 p-3"
+                                >
+                                  <p className="font-black text-sky-300">
+                                    {player.position ?? "相手"}
+                                  </p>
+                                  <p className="mt-1 text-sm text-white/65">
+                                    ハンド：
+                                    {player.handKnown
+                                      ? player.handText ||
+                                        `${cardText(player.firstCard)} ${cardText(player.secondCard)}`
+                                      : "不明"}
+                                  </p>
+                                </div>
+                              ))
                             ) : (
-                              <p className="text-sm text-slate-500">
-                                相手ハンド不明
-                              </p>
+                              <p className="text-sm text-white/35">相手ハンド不明</p>
                             )}
                           </div>
                         )}
                       </section>
 
-                      {hand.result
-                        ?.memo && (
-                        <section className="rounded-2xl border border-amber-900 bg-amber-950/30 p-4">
-                          <h3 className="font-bold text-amber-300">
-                            メモ
-                          </h3>
-
-                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">
-                            {
-                              hand.result
-                                .memo
-                            }
+                      {hand.result?.memo && (
+                        <section className="rounded-2xl border border-amber-900 bg-amber-950/20 p-4">
+                          <h3 className="font-black text-amber-300">メモ</h3>
+                          <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-white/70">
+                            {hand.result.memo}
                           </p>
                         </section>
                       )}
 
+                      <Link
+                        href={`/review?handId=${encodeURIComponent(hand.id)}`}
+                        className={`block w-full rounded-2xl p-4 text-center font-black ${
+                          cachedReview
+                            ? "border border-amber-700 bg-amber-300 text-amber-950"
+                            : "bg-gradient-to-r from-emerald-400 to-lime-300 text-slate-950"
+                        }`}
+                      >
+                        {cachedReview
+                          ? `🤖 AIレビューを見る（${cachedReview.totalScore ?? "-"}点）`
+                          : "🤖 このハンドをAIレビュー"}
+                      </Link>
+
                       <button
                         type="button"
-                        onClick={() =>
-                          deleteHand(
-                            hand.id,
-                          )
-                        }
-                        className="w-full rounded-xl border border-red-900 bg-red-950/30 p-4 font-bold text-red-300"
+                        onClick={() => deleteHand(hand.id)}
+                        className="w-full rounded-2xl border border-red-900 bg-red-950/20 p-4 font-bold text-red-300"
                       >
                         このハンドを削除
                       </button>
@@ -988,12 +759,14 @@ export default function HistoryPage() {
           <button
             type="button"
             onClick={deleteAllHands}
-            className="mt-8 w-full rounded-xl border border-red-950 p-4 text-sm font-bold text-red-400"
+            className="mt-8 w-full rounded-2xl border border-red-950 p-4 text-sm font-bold text-red-400"
           >
             保存したハンドをすべて削除
           </button>
         )}
       </div>
+
+      <BottomNav />
     </main>
   );
 }
