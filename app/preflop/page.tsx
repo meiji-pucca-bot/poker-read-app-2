@@ -525,13 +525,157 @@ export default function PreflopPage() {
     );
   }
 
+
+  function getPreflopFlowState(
+    targetActions: PreflopAction[],
+    targetVillains: Villain[],
+  ) {
+    const foldedPositions = new Set(
+      targetActions
+        .filter((action) => action.action === "Fold")
+        .map((action) => action.position),
+    );
+
+    const allInPositions = new Set(
+      targetActions
+        .filter((action) => action.action === "All-in")
+        .map((action) => action.position),
+    );
+
+    const participantPositions = Array.from(
+      new Set(
+        [
+          heroPosition || null,
+          ...targetVillains.map((villain) => villain.position),
+        ].filter((position): position is Position =>
+          Boolean(position),
+        ),
+      ),
+    );
+
+    const nonFoldedPositions = participantPositions.filter(
+      (position) => !foldedPositions.has(position),
+    );
+
+    const actionablePositions = nonFoldedPositions.filter(
+      (position) => !allInPositions.has(position),
+    );
+
+    const state = calculatePreflopState(
+      targetActions,
+      smallBlind,
+      bigBlind,
+    );
+
+    const heroFolded = Boolean(
+      heroPosition &&
+        foldedPositions.has(heroPosition),
+    );
+
+    const allInExists = allInPositions.size > 0;
+
+    const bettingClosedByAllIn =
+      !heroFolded &&
+      nonFoldedPositions.length >= 2 &&
+      allInExists &&
+      (
+        actionablePositions.length === 0 ||
+        (
+          actionablePositions.length === 1 &&
+          state.contributions[
+            actionablePositions[0]
+          ] >= state.highestContribution
+        )
+      );
+
+    return {
+      foldedPositions,
+      allInPositions,
+      participantPositions,
+      nonFoldedPositions,
+      actionablePositions,
+      heroFolded,
+      bettingClosedByAllIn,
+      bettingClosed:
+        heroFolded || bettingClosedByAllIn,
+    };
+  }
+
+  const currentFlowState = useMemo(
+    () =>
+      getPreflopFlowState(
+        actions,
+        villains,
+      ),
+    [
+      actions,
+      villains,
+      heroPosition,
+      smallBlind,
+      bigBlind,
+    ],
+  );
+
+  function moveToNextEligiblePosition(
+    currentPosition: Position,
+    targetActions: PreflopAction[],
+    targetVillains: Villain[],
+  ) {
+    const flowState = getPreflopFlowState(
+      targetActions,
+      targetVillains,
+    );
+
+    if (flowState.bettingClosed) {
+      return;
+    }
+
+    const currentIndex =
+      tablePositions.indexOf(currentPosition);
+
+    for (
+      let offset = 1;
+      offset <= tablePositions.length;
+      offset += 1
+    ) {
+      const nextIndex =
+        (currentIndex + offset) %
+        tablePositions.length;
+
+      const nextPosition =
+        tablePositions[nextIndex];
+
+      if (
+        flowState.foldedPositions.has(nextPosition) ||
+        flowState.allInPositions.has(nextPosition)
+      ) {
+        continue;
+      }
+
+      selectPosition(nextPosition);
+      return;
+    }
+  }
+
   function addAction() {
+    if (currentFlowState.bettingClosed) {
+      setMessage(
+        currentFlowState.heroFolded
+          ? "自分はフォールド済みです。保存して次へ進んでください。"
+          : "ベッティングは終了しています。保存して次へ進んでください。",
+      );
+      return;
+    }
+
     if (!selectedAction) {
       setMessage(
         "アクションを選んでください。",
       );
       return;
     }
+
+    let nextVillains = villains;
+
     // 自分以外がフォールド以外の行動をした場合、
     // 入力されたスタックで相手情報を自動登録・更新します。
     if (
@@ -551,33 +695,30 @@ export default function PreflopPage() {
         return;
       }
 
-      setVillains((current) => {
-        const existing = current.find(
-          (villain) =>
-            villain.position === activePosition,
-        );
+      const existing = villains.find(
+        (villain) =>
+          villain.position === activePosition,
+      );
 
-        if (existing) {
-          return current.map((villain) =>
+      nextVillains = existing
+        ? villains.map((villain) =>
             villain.position === activePosition
               ? {
                   ...villain,
                   stack: villainStackInput,
                 }
               : villain,
-          );
-        }
-
-        return [
-          ...current,
-          {
-            id: crypto.randomUUID(),
-            position: activePosition,
-            stack: villainStackInput,
-          },
-        ];
-      });
+          )
+        : [
+            ...villains,
+            {
+              id: crypto.randomUUID(),
+              position: activePosition,
+              stack: villainStackInput,
+            },
+          ];
     }
+
     if (
       selectedOption?.needsAmount &&
       !amount
@@ -588,9 +729,24 @@ export default function PreflopPage() {
       return;
     }
 
+    const effectiveStartingStack =
+      activePosition === heroPosition
+        ? Number(heroStack) || 0
+        : Number(
+            nextVillains.find(
+              (villain) =>
+                villain.position === activePosition,
+            )?.stack,
+          ) || 0;
+
+    const effectiveRemainingStack = Math.max(
+      0,
+      effectiveStartingStack - activeContribution,
+    );
+
     if (
       selectedAction === "All-in" &&
-      activeStartingStack <= 0
+      effectiveStartingStack <= 0
     ) {
       setMessage(
         activePosition === heroPosition
@@ -602,7 +758,7 @@ export default function PreflopPage() {
 
     if (
       selectedAction === "All-in" &&
-      activeRemainingStack <= 0
+      effectiveRemainingStack <= 0
     ) {
       setMessage(
         "残りスタックがありません。",
@@ -656,8 +812,8 @@ export default function PreflopPage() {
       }
 
       if (
-        activeStartingStack > 0 &&
-        finalAmount > activeStartingStack
+        effectiveStartingStack > 0 &&
+        finalAmount > effectiveStartingStack
       ) {
         setMessage(
           "スタックを超える金額は入力できません。",
@@ -681,17 +837,20 @@ export default function PreflopPage() {
     if (selectedAction === "Limp") {
       finalAmount = Math.min(
         Number(bigBlind) || 0,
-        activeStartingStack || Number(bigBlind) || 0,
+        effectiveStartingStack ||
+          Number(bigBlind) ||
+          0,
       );
     } else if (selectedAction === "Call") {
       finalAmount =
         activeContribution +
         Math.min(
           automaticCallAmount,
-          activeRemainingStack || automaticCallAmount,
+          effectiveRemainingStack ||
+            automaticCallAmount,
         );
     } else if (selectedAction === "All-in") {
-      finalAmount = activeStartingStack;
+      finalAmount = effectiveStartingStack;
     } else if (selectedOption?.needsAmount) {
       finalAmount = Number(amount);
     }
@@ -714,28 +873,42 @@ export default function PreflopPage() {
       potBefore: preflopState.pot,
     };
 
-    setActions((current) => [
-      ...current,
+    const nextActions = [
+      ...actions,
       newAction,
-    ]);
+    ];
 
+    setVillains(nextVillains);
+    setActions(nextActions);
     setSelectedAction("");
     setAmount("");
+
+    const nextFlowState = getPreflopFlowState(
+      nextActions,
+      nextVillains,
+    );
+
+    if (nextFlowState.heroFolded) {
+      setMessage(
+        "自分がフォールドしました。以降のアクション入力は不要です。保存して次へ進んでください。",
+      );
+      return;
+    }
+
+    if (nextFlowState.bettingClosedByAllIn) {
+      setMessage(
+        "オールインでベッティングが終了しました。保存後は残りのボードカードだけ入力します。",
+      );
+      return;
+    }
+
     setMessage("");
 
-    const currentIndex =
-      tablePositions.indexOf(activePosition);
-
-    if (
-      currentIndex <
-      tablePositions.length - 1
-    ) {
-      selectPosition(
-        tablePositions[currentIndex + 1],
-      );
-    } else {
-      selectPosition("UTG");
-    }
+    moveToNextEligiblePosition(
+      activePosition,
+      nextActions,
+      nextVillains,
+    );
   }
 
   function foldUntilHero() {
@@ -874,6 +1047,11 @@ export default function PreflopPage() {
           preflopState.contributions,
         heroPosition,
         villains: participatingVillains,
+        heroFolded: currentFlowState.heroFolded,
+        bettingClosedByAllIn:
+          currentFlowState.bettingClosedByAllIn,
+        bettingClosed:
+          currentFlowState.bettingClosed,
         savedAt: new Date().toISOString(),
       }),
     );
@@ -977,10 +1155,27 @@ export default function PreflopPage() {
           </p>
         </section>
 
+        {currentFlowState.bettingClosed && (
+          <section className="mb-4 rounded-2xl border border-amber-700 bg-amber-950/40 p-5">
+            <p className="text-sm font-bold text-amber-300">
+              {currentFlowState.heroFolded
+                ? "♠ 自分はフォールド済みです"
+                : "♠ オールイン状態"}
+            </p>
+
+            <p className="mt-2 text-sm leading-6 text-slate-200">
+              {currentFlowState.heroFolded
+                ? "以降のアクション入力は不要です。保存して次へ進んでください。"
+                : "ベッティングは終了しています。保存後は残りのボードカードだけ入力します。"}
+            </p>
+          </section>
+        )}
+
         <button
           type="button"
           onClick={foldUntilHero}
-          className="mb-4 w-full rounded-xl border border-emerald-800 bg-emerald-950/40 p-4 font-bold text-emerald-300"
+          disabled={currentFlowState.bettingClosed}
+          className="mb-4 w-full rounded-xl border border-emerald-800 bg-emerald-950/40 p-4 font-bold text-emerald-300 disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-slate-900 disabled:text-slate-600"
         >
           自分の手前まで未入力者をフォールド
         </button>
@@ -1005,6 +1200,11 @@ export default function PreflopPage() {
                 <button
                   key={position}
                   type="button"
+                  disabled={
+                    currentFlowState.bettingClosed ||
+                    currentFlowState.foldedPositions.has(position) ||
+                    currentFlowState.allInPositions.has(position)
+                  }
                   onClick={() =>
                     selectPosition(position)
                   }
@@ -1020,7 +1220,7 @@ export default function PreflopPage() {
                         : villain
                           ? "border-sky-900 bg-sky-950/30 text-sky-300"
                           : "border-slate-700 bg-slate-950"
-                  }`}
+                  } disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-slate-950 disabled:text-slate-600`}
                 >
                   {position}
                 </button>
@@ -1050,7 +1250,8 @@ export default function PreflopPage() {
             )}
           </div>
 
-          {activePosition !== heroPosition && (
+          {!currentFlowState.bettingClosed &&
+            activePosition !== heroPosition && (
             <div className="mt-4 rounded-2xl border border-sky-900 bg-sky-950/30 p-4">
               <p className="text-sm font-bold text-sky-300">
                 対戦相手として登録
@@ -1117,6 +1318,7 @@ export default function PreflopPage() {
               <button
                 key={option.key}
                 type="button"
+                disabled={currentFlowState.bettingClosed}
                 onClick={() => {
                   setSelectedAction(option.key);
 
@@ -1130,7 +1332,7 @@ export default function PreflopPage() {
                   selectedAction === option.key
                     ? "border-emerald-500 bg-emerald-500 text-slate-950"
                     : "border-slate-700 bg-slate-950"
-                }`}
+                } disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-slate-950 disabled:text-slate-600`}
               >
                 <span className="block font-bold">
                   {option.label}
@@ -1225,9 +1427,12 @@ export default function PreflopPage() {
           <button
             type="button"
             onClick={addAction}
-            className="mt-5 w-full rounded-xl bg-emerald-500 p-4 font-bold text-slate-950 active:scale-95"
+            disabled={currentFlowState.bettingClosed}
+            className="mt-5 w-full rounded-xl bg-emerald-500 p-4 font-bold text-slate-950 active:scale-95 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
           >
-            このアクションを追加
+            {currentFlowState.bettingClosed
+              ? "アクション入力は終了しています"
+              : "このアクションを追加"}
           </button>
         </section>
 

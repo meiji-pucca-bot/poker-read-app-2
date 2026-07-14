@@ -89,6 +89,12 @@ type StoredPreflop = {
   endingPot?: number;
   contributions?: Record<string, number>;
   villains?: Villain[];
+  actions?: Array<{
+    playerId?: string;
+    position: string;
+    action: string;
+    addedAmount?: number;
+  }>;
 };
 
 type StoredStreet = {
@@ -96,6 +102,7 @@ type StoredStreet = {
   endingPot?: number;
   board?: Card[];
   actions?: StreetAction[];
+  autoSkippedByAllIn?: boolean;
   savedAt?: string;
 };
 
@@ -321,6 +328,10 @@ export default function StreetEntry({
   const [players, setPlayers] = useState<Player[]>([]);
   const [spentBeforeStreet, setSpentBeforeStreet] =
     useState<Record<string, number>>({});
+  const [
+    previousFoldedPlayerIds,
+    setPreviousFoldedPlayerIds,
+  ] = useState<string[]>([]);
 
   const [bigBlind, setBigBlind] = useState("");
   const [startingPot, setStartingPot] = useState(0);
@@ -429,7 +440,53 @@ export default function StreetEntry({
 
     setSpentBeforeStreet(spentMap);
 
-    if (loadedPlayers.length > 0) {
+    const previousActions: Array<{
+      playerId?: string;
+      position: string;
+      action: string;
+    }> = [
+      ...(Array.isArray(preflop?.actions)
+        ? preflop.actions
+        : []),
+      ...(streetName === "turn" ||
+      streetName === "river"
+        ? Array.isArray(flop?.actions)
+          ? flop.actions
+          : []
+        : []),
+      ...(streetName === "river"
+        ? Array.isArray(turn?.actions)
+          ? turn.actions
+          : []
+        : []),
+    ];
+
+    const foldedBeforeIds = loadedPlayers
+      .filter((player) =>
+        previousActions.some(
+          (action) =>
+            action.action === "Fold" &&
+            (action.playerId === player.id ||
+              action.position === player.position),
+        ),
+      )
+      .map((player) => player.id);
+
+    setPreviousFoldedPlayerIds(foldedBeforeIds);
+
+    const firstAvailablePlayer = loadedPlayers.find(
+      (player) =>
+        !foldedBeforeIds.includes(player.id) &&
+        Math.max(
+          0,
+          Number(player.stack) -
+            (spentMap[player.id] ?? 0),
+        ) > 0,
+    );
+
+    if (firstAvailablePlayer) {
+      setActivePlayerId(firstAvailablePlayer.id);
+    } else if (loadedPlayers.length > 0) {
       setActivePlayerId(loadedPlayers[0].id);
     }
 
@@ -526,21 +583,20 @@ export default function StreetEntry({
       player.id === activePlayerId,
   );
 
-  const foldedPlayerIds = useMemo(
-    () =>
-      new Set(
-        actions
-          .filter(
-            (action) =>
-              action.action === "Fold",
-          )
-          .map(
-            (action) =>
-              action.playerId,
-          ),
-      ),
-    [actions],
-  );
+  const foldedPlayerIds = useMemo(() => {
+    const result = new Set(previousFoldedPlayerIds);
+
+    actions
+      .filter(
+        (action) =>
+          action.action === "Fold",
+      )
+      .forEach((action) => {
+        result.add(action.playerId);
+      });
+
+    return result;
+  }, [actions, previousFoldedPlayerIds]);
 
   const currentPot = useMemo(() => {
     const addedTotal = actions.reduce(
@@ -568,6 +624,53 @@ export default function StreetEntry({
 
     return result;
   }, [actions, players]);
+
+  const remainingStacks = useMemo(() => {
+    const result: Record<string, number> = {};
+
+    players.forEach((player) => {
+      result[player.id] = Math.max(
+        0,
+        Number(player.stack) -
+          (spentBeforeStreet[player.id] ?? 0) -
+          (contributions[player.id] ?? 0),
+      );
+    });
+
+    return result;
+  }, [contributions, players, spentBeforeStreet]);
+
+  const nonFoldedPlayers = useMemo(
+    () =>
+      players.filter(
+        (player) =>
+          !foldedPlayerIds.has(player.id),
+      ),
+    [foldedPlayerIds, players],
+  );
+
+  const allInPlayers = useMemo(
+    () =>
+      nonFoldedPlayers.filter(
+        (player) =>
+          (remainingStacks[player.id] ?? 0) <= 0,
+      ),
+    [nonFoldedPlayers, remainingStacks],
+  );
+
+  const actionablePlayers = useMemo(
+    () =>
+      nonFoldedPlayers.filter(
+        (player) =>
+          (remainingStacks[player.id] ?? 0) > 0,
+      ),
+    [nonFoldedPlayers, remainingStacks],
+  );
+
+  const bettingClosedByAllIn =
+    nonFoldedPlayers.length >= 2 &&
+    allInPlayers.length >= 1 &&
+    actionablePlayers.length <= 1;
 
   const highestContribution = Math.max(
     0,
@@ -671,6 +774,13 @@ export default function StreetEntry({
       return;
     }
 
+    if ((remainingStacks[playerId] ?? 0) <= 0) {
+      setMessage(
+        "このプレイヤーはすでにオールインしています。",
+      );
+      return;
+    }
+
     setActivePlayerId(playerId);
     setSelectedAction("");
     setAmount("");
@@ -770,19 +880,24 @@ export default function StreetEntry({
         players[nextIndex];
 
       if (
-        !foldedPlayerIds.has(
-          nextPlayer.id,
-        )
+        !foldedPlayerIds.has(nextPlayer.id) &&
+        (remainingStacks[nextPlayer.id] ?? 0) > 0 &&
+        nextPlayer.id !== activePlayer.id
       ) {
-        setActivePlayerId(
-          nextPlayer.id,
-        );
+        setActivePlayerId(nextPlayer.id);
         return;
       }
     }
   }
 
   function addAction() {
+    if (bettingClosedByAllIn) {
+      setMessage(
+        "オールインにより、以降のアクション入力は不要です。",
+      );
+      return;
+    }
+
     if (!activePlayer) {
       setMessage(
         "行動したプレイヤーを選択してください。",
@@ -1029,7 +1144,10 @@ export default function StreetEntry({
       return;
     }
 
-    if (actions.length === 0) {
+    if (
+      actions.length === 0 &&
+      !bettingClosedByAllIn
+    ) {
       setMessage(
         `${japaneseTitle}のアクションを入力してください。`,
       );
@@ -1044,6 +1162,8 @@ export default function StreetEntry({
         board,
         actions,
         players,
+        autoSkippedByAllIn:
+          bettingClosedByAllIn,
         savedAt:
           new Date().toISOString(),
       }),
@@ -1199,7 +1319,53 @@ export default function StreetEntry({
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+        {bettingClosedByAllIn ? (
+          <section className="rounded-2xl border border-amber-700 bg-gradient-to-br from-amber-950/60 to-slate-900 p-5">
+            <p className="text-sm font-bold text-amber-300">
+              ♠ オールイン状態
+            </p>
+
+            <h2 className="mt-2 text-xl font-bold">
+              アクション入力を自動でスキップします
+            </h2>
+
+            <p className="mt-3 text-sm leading-7 text-slate-300">
+              残っているプレイヤーのうち、行動できるのが1人以下になりました。
+              以降はベットできないため、ボードカードだけ入力して次へ進んでください。
+            </p>
+
+            <div className="mt-4 space-y-2">
+              {nonFoldedPlayers.map((player) => {
+                const remaining =
+                  remainingStacks[player.id] ?? 0;
+
+                return (
+                  <div
+                    key={player.id}
+                    className="flex items-center justify-between rounded-xl border border-white/10 bg-black/20 p-3"
+                  >
+                    <span className="font-bold">
+                      {player.label}
+                    </span>
+
+                    <span
+                      className={
+                        remaining <= 0
+                          ? "font-bold text-amber-300"
+                          : "text-sm text-slate-300"
+                      }
+                    >
+                      {remaining <= 0
+                        ? "オールイン"
+                        : `残り ${formatNumber(remaining)}`}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ) : (
+          <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
           <h2 className="text-lg font-bold">
             行動したプレイヤー
           </h2>
@@ -1211,6 +1377,10 @@ export default function StreetEntry({
 
               const folded =
                 foldedPlayerIds.has(player.id);
+
+              const allIn =
+                !folded &&
+                (remainingStacks[player.id] ?? 0) <= 0;
 
               const contributed =
                 contributions[player.id] ?? 0;
@@ -1229,12 +1399,12 @@ export default function StreetEntry({
                 <button
                   key={player.id}
                   type="button"
-                  disabled={folded}
+                  disabled={folded || allIn}
                   onClick={() =>
                     selectPlayer(player.id)
                   }
                   className={`rounded-xl border p-4 text-left ${
-                    folded
+                    folded || allIn
                       ? "cursor-not-allowed border-slate-800 bg-slate-950 text-slate-600"
                       : selected
                         ? player.role === "hero"
@@ -1248,8 +1418,11 @@ export default function StreetEntry({
                   </span>
 
                   <span className="mt-1 block text-xs">
-                    残り：
-                    {formatNumber(remaining)}
+                    {folded
+                      ? "フォールド済み"
+                      : allIn
+                        ? "オールイン済み"
+                        : `残り：${formatNumber(remaining)}`}
                   </span>
                 </button>
               );
@@ -1379,7 +1552,8 @@ export default function StreetEntry({
           >
             このアクションを追加
           </button>
-        </section>
+          </section>
+        )}
 
         <section className="mt-4 rounded-2xl border border-slate-800 bg-slate-900 p-5">
           <div className="flex items-center justify-between">
@@ -1398,7 +1572,14 @@ export default function StreetEntry({
           </div>
 
           <div className="mt-4 space-y-2">
-            {actions.map((action, index) => (
+            {actions.length === 0 ? (
+              <p className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-sm text-slate-400">
+                {bettingClosedByAllIn
+                  ? "オールイン状態のため、このストリートのアクション入力は自動でスキップされます。"
+                  : "まだアクションがありません。"}
+              </p>
+            ) : (
+              actions.map((action, index) => (
               <div
                 key={action.id}
                 className="rounded-xl border border-slate-800 bg-slate-950 p-3"
@@ -1424,7 +1605,8 @@ export default function StreetEntry({
                     )}）`}
                 </p>
               </div>
-            ))}
+              ))
+            )}
           </div>
         </section>
 
