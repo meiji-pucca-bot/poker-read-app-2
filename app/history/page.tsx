@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 
 type ResultFilter = "all" | "win" | "lose" | "chop";
 type ReviewFilter = "all" | "reviewed" | "unreviewed";
+type SortType = "newest" | "oldest" | "scoreHigh" | "importanceHigh";
 
 type Card = {
   rank?: string;
@@ -321,6 +322,7 @@ export default function HistoryPage() {
   const [resultFilter, setResultFilter] = useState<ResultFilter>("all");
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
   const [positionFilter, setPositionFilter] = useState("all");
+  const [sortType, setSortType] = useState<SortType>("newest");
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
@@ -344,7 +346,7 @@ export default function HistoryPage() {
   const filteredHands = useMemo(() => {
     const keyword = search.trim().toLowerCase();
 
-    return hands.filter((hand) => {
+    const matchedHands = hands.filter((hand) => {
       const villains = getVillains(hand);
       const review = reviewCache[hand.id];
       const searchableText = [
@@ -372,7 +374,37 @@ export default function HistoryPage() {
 
       return matchesSearch && matchesResult && matchesReview && matchesPosition;
     });
-  }, [hands, positionFilter, resultFilter, reviewCache, reviewFilter, search]);
+
+    return [...matchedHands].sort((a, b) => {
+      if (sortType === "oldest") {
+        return new Date(a.savedAt).getTime() - new Date(b.savedAt).getTime();
+      }
+
+      if (sortType === "scoreHigh") {
+        const scoreA = reviewCache[a.id]?.totalScore ?? -1;
+        const scoreB = reviewCache[b.id]?.totalScore ?? -1;
+        return scoreB - scoreA;
+      }
+
+      if (sortType === "importanceHigh") {
+        const importanceA = a.result?.importance ?? 1;
+        const importanceB = b.result?.importance ?? 1;
+        if (importanceA !== importanceB) {
+          return importanceB - importanceA;
+        }
+      }
+
+      return new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime();
+    });
+  }, [
+    hands,
+    positionFilter,
+    resultFilter,
+    reviewCache,
+    reviewFilter,
+    search,
+    sortType,
+  ]);
 
   const totalWins = useMemo(
     () => hands.filter((hand) => hand.result?.type === "win").length,
@@ -383,6 +415,18 @@ export default function HistoryPage() {
     () => hands.filter((hand) => Boolean(reviewCache[hand.id])).length,
     [hands, reviewCache],
   );
+
+  const averageScore = useMemo(() => {
+    const scores = hands
+      .map((hand) => reviewCache[hand.id]?.totalScore)
+      .filter((score): score is number => typeof score === "number");
+
+    if (scores.length === 0) return null;
+
+    return Math.round(
+      scores.reduce((sum, score) => sum + score, 0) / scores.length,
+    );
+  }, [hands, reviewCache]);
 
   function deleteHand(handId: string) {
     if (!window.confirm("このハンドを削除しますか？")) return;
@@ -435,9 +479,9 @@ export default function HistoryPage() {
           </p>
         </header>
 
-        <section className="grid grid-cols-3 gap-3">
+        <section className="grid grid-cols-2 gap-3">
           <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
-            <p className="text-xs text-white/40">保存</p>
+            <p className="text-xs text-white/40">保存ハンド</p>
             <p className="mt-1 text-2xl font-black">{hands.length}</p>
           </div>
 
@@ -449,6 +493,13 @@ export default function HistoryPage() {
           <div className="rounded-3xl border border-amber-900 bg-amber-950/30 p-4">
             <p className="text-xs text-amber-300">レビュー済</p>
             <p className="mt-1 text-2xl font-black text-amber-300">{reviewedCount}</p>
+          </div>
+
+          <div className="rounded-3xl border border-sky-900 bg-sky-950/30 p-4">
+            <p className="text-xs text-sky-300">AI平均点</p>
+            <p className="mt-1 text-2xl font-black text-sky-300">
+              {averageScore ?? "—"}
+            </p>
           </div>
         </section>
 
@@ -529,6 +580,23 @@ export default function HistoryPage() {
               </div>
             </div>
 
+            <div className="mt-4">
+              <label htmlFor="sort-type" className="text-xs font-black text-white/45">
+                並び順
+              </label>
+              <select
+                id="sort-type"
+                value={sortType}
+                onChange={(event) => setSortType(event.target.value as SortType)}
+                className="mt-2 w-full rounded-xl border border-white/10 bg-black/30 p-3"
+              >
+                <option value="newest">新しい順</option>
+                <option value="oldest">古い順</option>
+                <option value="scoreHigh">AI評価が高い順</option>
+                <option value="importanceHigh">重要度が高い順</option>
+              </select>
+            </div>
+
             <p className="mt-4 text-sm text-white/45">
               {filteredHands.length}件を表示
             </p>
@@ -552,6 +620,7 @@ export default function HistoryPage() {
                 setResultFilter("all");
                 setReviewFilter("all");
                 setPositionFilter("all");
+                setSortType("newest");
               }}
               className="mt-4 rounded-xl border border-emerald-700 px-4 py-3 font-bold text-emerald-300"
             >
