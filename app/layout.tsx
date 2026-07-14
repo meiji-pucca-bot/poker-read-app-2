@@ -12,7 +12,7 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-eexport const metadata: Metadata = {
+export const metadata: Metadata = {
   title: "Poker Read",
   description: "AIでポーカーハンドを振り返る学習アプリ",
   manifest: "/manifest.webmanifest",
