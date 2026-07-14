@@ -3,7 +3,12 @@
 import Link from "next/link";
 import BottomNav from "@/components/BottomNav";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import {
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 type Action = {
   id?: string;
@@ -533,7 +538,7 @@ function StreetReviewCard({
   );
 }
 
-export default function ReviewPage() {
+function ReviewPageContent() {
     const searchParams = useSearchParams();
   const handIdFromUrl = searchParams.get("handId");
   const [hands, setHands] =
@@ -1042,5 +1047,26 @@ export default function ReviewPage() {
 
       <BottomNav />
     </main>
+  );
+}
+export default function ReviewPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-[#07150f] px-4 py-7 text-white">
+          <div className="mx-auto max-w-md">
+            <section className="rounded-3xl border border-emerald-800 bg-emerald-950/30 p-6 text-center">
+              <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-white/20 border-t-emerald-300" />
+
+              <p className="mt-4 font-black">
+                AIレビュー画面を読み込み中
+              </p>
+            </section>
+          </div>
+        </main>
+      }
+    >
+      <ReviewPageContent />
+    </Suspense>
   );
 }
