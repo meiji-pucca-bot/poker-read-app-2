@@ -380,11 +380,11 @@ export default function StreetEntry({
     setMode(currentMode);
 
     const tournamentSetup =
-      currentMode === "tournament"
-        safeParse<TournamentConfig>(
-            "poker-read-tournament-current",
-          )
-        : null;
+  currentMode === "tournament"
+    ? safeParse<TournamentConfig>(
+        "poker-read-tournament-current",
+      )
+    : null;
 
     const table =
       currentMode === "tournament"
