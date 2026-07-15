@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { getModeStorageKey, getPokerMode } from "@/lib/pokerMode";
 
 const tablePositions = [
   "UTG",
@@ -52,6 +53,14 @@ type SavedTable = {
   smallBlind?: string;
   bigBlind?: string;
   heroStack?: string;
+};
+
+type TournamentSetup = {
+  smallBlind?: number;
+  bigBlind?: number;
+  heroStack?: number;
+  ante?: number;
+  tournamentName?: string;
 };
 
 type ContributionMap = Record<Position, number>;
@@ -242,10 +251,16 @@ export default function PreflopPage() {
 
   const [message, setMessage] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [mode, setMode] = useState<"cash" | "tournament">("cash");
+  const [tournamentName, setTournamentName] = useState("");
+  const [ante, setAnte] = useState("");
 
   useEffect(() => {
+    const currentMode = getPokerMode();
+    setMode(currentMode);
+
     const savedPositions = localStorage.getItem(
-      "poker-read-positions",
+      getModeStorageKey("poker-read-positions"),
     );
 
     if (savedPositions) {
@@ -262,28 +277,65 @@ export default function PreflopPage() {
       }
     }
 
-    const savedTable = localStorage.getItem(
-      "poker-read-current-table",
-    );
+    const savedTable =
+      currentMode === "tournament"
+        ? localStorage.getItem(
+            "poker-read-tournament-current",
+          )
+        : localStorage.getItem(
+            "poker-read-current-table",
+          );
 
     if (savedTable) {
       try {
-        const parsed = JSON.parse(
-          savedTable,
-        ) as SavedTable;
+        if (currentMode === "tournament") {
+          const parsed = JSON.parse(
+            savedTable,
+          ) as TournamentSetup;
 
-        setSmallBlind(parsed.smallBlind ?? "");
-        setBigBlind(parsed.bigBlind ?? "");
-        setHeroStack(parsed.heroStack ?? "");
+          setSmallBlind(
+            parsed.smallBlind !== undefined
+              ? String(parsed.smallBlind)
+              : "",
+          );
+          setBigBlind(
+            parsed.bigBlind !== undefined
+              ? String(parsed.bigBlind)
+              : "",
+          );
+          setHeroStack(
+            parsed.heroStack !== undefined
+              ? String(parsed.heroStack)
+              : "",
+          );
+          setAnte(
+            parsed.ante !== undefined
+              ? String(parsed.ante)
+              : "0",
+          );
+          setTournamentName(
+            parsed.tournamentName ?? "",
+          );
+        } else {
+          const parsed = JSON.parse(
+            savedTable,
+          ) as SavedTable;
+
+          setSmallBlind(parsed.smallBlind ?? "");
+          setBigBlind(parsed.bigBlind ?? "");
+          setHeroStack(parsed.heroStack ?? "");
+        }
       } catch {
         setMessage(
-          "テーブル情報を読み込めませんでした。",
+          currentMode === "tournament"
+            ? "大会情報を読み込めませんでした。"
+            : "テーブル情報を読み込めませんでした。",
         );
       }
     }
 
     const savedDraft = localStorage.getItem(
-      "poker-read-preflop-draft",
+      getModeStorageKey("poker-read-preflop-draft"),
     );
 
     if (savedDraft) {
@@ -314,7 +366,7 @@ export default function PreflopPage() {
         }
       } catch {
         localStorage.removeItem(
-          "poker-read-preflop-draft",
+          getModeStorageKey("poker-read-preflop-draft"),
         );
       }
     }
@@ -328,7 +380,7 @@ export default function PreflopPage() {
     }
 
     localStorage.setItem(
-      "poker-read-preflop-draft",
+      getModeStorageKey("poker-read-preflop-draft"),
       JSON.stringify({
         actions,
         villains,
@@ -975,11 +1027,11 @@ export default function PreflopPage() {
     setVillainStackInput("");
 
     localStorage.removeItem(
-      "poker-read-preflop-draft",
+      getModeStorageKey("poker-read-preflop-draft"),
     );
 
     localStorage.removeItem(
-      "poker-read-preflop",
+      getModeStorageKey("poker-read-preflop"),
     );
 
     setMessage(
@@ -1039,7 +1091,7 @@ export default function PreflopPage() {
     }
 
     localStorage.setItem(
-      "poker-read-preflop",
+      getModeStorageKey("poker-read-preflop"),
       JSON.stringify({
         actions,
         endingPot: preflopState.pot,
@@ -1057,7 +1109,7 @@ export default function PreflopPage() {
     );
 
     localStorage.setItem(
-      "poker-read-positions",
+      getModeStorageKey("poker-read-positions"),
       JSON.stringify({
         heroPosition,
         villainPosition:
@@ -1068,7 +1120,7 @@ export default function PreflopPage() {
     );
 
     localStorage.removeItem(
-      "poker-read-preflop-draft",
+      getModeStorageKey("poker-read-preflop-draft"),
     );
 
     router.push("/flop");
@@ -1088,6 +1140,19 @@ export default function PreflopPage() {
           <p className="mb-2 text-sm font-bold text-emerald-400">
             STEP 4 / プリフロップ
           </p>
+
+          {mode === "tournament" && (
+            <div className="mb-3 rounded-2xl border border-amber-700/60 bg-amber-950/30 p-3">
+              <p className="text-xs font-black text-amber-300">
+                🏆 トーナメントモード
+              </p>
+
+              <p className="mt-1 text-sm text-white/70">
+                {tournamentName || "大会名未設定"}
+                {ante && ` / BBアンティ ${formatNumber(ante)}`}
+              </p>
+            </div>
+          )}
 
           <h1 className="text-3xl font-bold">
             プリフロップを記録

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { getModeStorageKey, getPokerMode } from "@/lib/pokerMode";
 
 const ranks = [
   "A",
@@ -78,6 +79,13 @@ type StoredPositions = {
 type StoredTable = {
   heroStack?: string;
   bigBlind?: string;
+};
+type TournamentConfig = {
+  smallBlind?: number;
+  bigBlind?: number;
+  heroStack?: number;
+  ante?: number;
+  tournamentName?: string;
 };
 
 type StoredHeroHand = {
@@ -360,34 +368,74 @@ export default function StreetEntry({
 
   const [message, setMessage] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [mode, setMode] = useState<"cash" | "tournament">("cash");
+  const [tournamentName, setTournamentName] = useState("");
+  const [ante, setAnte] = useState("");
 
-  const storageKey = `poker-read-${streetName}`;
-  const draftKey = `poker-read-${streetName}-draft`;
+  const storageKey = getModeStorageKey(`poker-read-${streetName}`);
+  const draftKey = getModeStorageKey(`poker-read-${streetName}-draft`);
 
   useEffect(() => {
-    const table = safeParse<StoredTable>(
-      "poker-read-current-table",
-    );
+    const currentMode = getPokerMode();
+    setMode(currentMode);
+
+    const tournamentSetup =
+      currentMode === "tournament"
+        safeParse<TournamentConfig>(
+            "poker-read-tournament-current",
+          )
+        : null;
+
+    const table =
+      currentMode === "tournament"
+        ? {
+            smallBlind:
+              tournamentSetup?.smallBlind !== undefined
+                ? String(tournamentSetup.smallBlind)
+                : "",
+            bigBlind:
+              tournamentSetup?.bigBlind !== undefined
+                ? String(tournamentSetup.bigBlind)
+                : "",
+            heroStack:
+              tournamentSetup?.heroStack !== undefined
+                ? String(tournamentSetup.heroStack)
+                : "",
+          }
+        : safeParse<StoredTable>(
+            "poker-read-current-table",
+          );
 
     const positions = safeParse<StoredPositions>(
-      "poker-read-positions",
+      getModeStorageKey("poker-read-positions"),
     );
 
     const preflop = safeParse<StoredPreflop>(
-      "poker-read-preflop",
+      getModeStorageKey("poker-read-preflop"),
     );
 
     const flop = safeParse<StoredStreet>(
-      "poker-read-flop",
+      getModeStorageKey("poker-read-flop"),
     );
 
     const turn = safeParse<StoredStreet>(
-      "poker-read-turn",
+      getModeStorageKey("poker-read-turn"),
     );
 
     const heroHand = safeParse<StoredHeroHand>(
-      "poker-read-hero-hand",
+      getModeStorageKey("poker-read-hero-hand"),
     );
+
+    if (currentMode === "tournament") {
+      setTournamentName(
+        tournamentSetup?.tournamentName ?? "",
+      );
+      setAnte(
+        tournamentSetup?.ante !== undefined
+          ? String(tournamentSetup.ante)
+          : "0",
+      );
+    }
 
     setBigBlind(table?.bigBlind ?? "");
 
@@ -492,7 +540,11 @@ export default function StreetEntry({
 
     const previousPotData = safeParse<
       StoredPreflop | StoredStreet
-    >(startingPotStorageKey(streetName));
+    >(
+      getModeStorageKey(
+        startingPotStorageKey(streetName),
+      ),
+    );
 
     setStartingPot(
       Number(previousPotData?.endingPot) || 0,
@@ -516,7 +568,9 @@ export default function StreetEntry({
 
     previousBoardKeys.forEach((key) => {
       const street =
-        safeParse<StoredStreet>(key);
+        safeParse<StoredStreet>(
+          getModeStorageKey(key),
+        );
 
       if (Array.isArray(street?.board)) {
         loadedPreviousBoard.push(
@@ -1188,6 +1242,19 @@ export default function StreetEntry({
           <p className="mb-2 text-sm font-bold text-emerald-400">
             {stepText}
           </p>
+
+          {mode === "tournament" && (
+            <div className="mb-3 rounded-2xl border border-amber-700/60 bg-amber-950/30 p-3">
+              <p className="text-xs font-black text-amber-300">
+                🏆 トーナメントモード
+              </p>
+
+              <p className="mt-1 text-sm text-white/70">
+                {tournamentName || "大会名未設定"}
+                {ante && ` / BBアンティ ${formatNumber(ante)}`}
+              </p>
+            </div>
+          )}
 
           <h1 className="text-3xl font-bold">
             {japaneseTitle}を記録

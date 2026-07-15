@@ -3,67 +3,69 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { setPokerMode } from "@/lib/pokerMode";
 
 const tournamentPhases = [
   {
-    key: "early",
+    value: "early",
     label: "序盤",
     description: "スタックが深く、入賞まではまだ遠い",
   },
   {
-    key: "middle",
+    value: "middle",
     label: "中盤",
     description: "ブラインドが上がり、スタック差が出始める",
   },
   {
-    key: "bubble",
+    value: "bubble",
     label: "バブル",
     description: "あと少しで入賞が決まる",
   },
   {
-    key: "itm",
+    value: "itm",
     label: "入賞後",
-    description: "すでに賞金圏内へ入っている",
+    description: "すでに賞金圏内に入っている",
   },
   {
-    key: "final-table",
+    value: "final-table",
     label: "ファイナルテーブル",
     description: "最後の1卓で順位賞金を争う",
   },
   {
-    key: "heads-up",
+    value: "heads-up",
     label: "ヘッズアップ",
     description: "残り2人で優勝を争う",
   },
 ] as const;
 
 type TournamentPhase =
-  (typeof tournamentPhases)[number]["key"];
+  (typeof tournamentPhases)[number]["value"];
 
 type TournamentSetup = {
   id: string;
   tournamentName: string;
-  smallBlind: string;
-  bigBlind: string;
-  ante: string;
-  heroStack: string;
-  remainingPlayers: string;
-  paidPlaces: string;
-  currentRank: string;
+  smallBlind: number;
+  bigBlind: number;
+  ante: number;
+  heroStack: number;
+  heroStackBb: number;
+  remainingPlayers: number;
+  paidPlaces: number;
+  currentRank: number | null;
   phase: TournamentPhase;
   considerIcm: boolean;
   createdAt: string;
 };
 
-function onlyNumbers(value: string) {
-  return value === "" || /^\d*$/.test(value);
+function normalizeNumber(value: string): string {
+  return value.replace(/[^\d]/g, "");
 }
 
-function formatNumber(value: string) {
+function formatChips(value: string | number): string {
   const number = Number(value);
 
   if (!Number.isFinite(number)) {
-    return value;
+    return "0";
   }
 
   return number.toLocaleString("ja-JP");
@@ -72,39 +74,22 @@ function formatNumber(value: string) {
 export default function TournamentNewHandPage() {
   const router = useRouter();
 
-  const [tournamentName, setTournamentName] =
-    useState("");
-
-  const [smallBlind, setSmallBlind] =
-    useState("");
-
-  const [bigBlind, setBigBlind] =
-    useState("");
-
+  const [tournamentName, setTournamentName] = useState("");
+  const [smallBlind, setSmallBlind] = useState("");
+  const [bigBlind, setBigBlind] = useState("");
   const [ante, setAnte] = useState("");
-
-  const [heroStack, setHeroStack] =
-    useState("");
-
-  const [remainingPlayers, setRemainingPlayers] =
-    useState("");
-
-  const [paidPlaces, setPaidPlaces] =
-    useState("");
-
-  const [currentRank, setCurrentRank] =
-    useState("");
-
+  const [heroStack, setHeroStack] = useState("");
+  const [remainingPlayers, setRemainingPlayers] = useState("");
+  const [paidPlaces, setPaidPlaces] = useState("");
+  const [currentRank, setCurrentRank] = useState("");
   const [phase, setPhase] =
     useState<TournamentPhase>("early");
-
-  const [considerIcm, setConsiderIcm] =
-    useState(false);
-
-  const [message, setMessage] =
-    useState("");
+  const [considerIcm, setConsiderIcm] = useState(false);
+  const [message, setMessage] = useState("");
 
   useEffect(() => {
+    setPokerMode("tournament");
+
     const saved = localStorage.getItem(
       "poker-read-tournament-current",
     );
@@ -118,49 +103,60 @@ export default function TournamentNewHandPage() {
         saved,
       ) as Partial<TournamentSetup>;
 
-      setTournamentName(
-        parsed.tournamentName ?? "",
-      );
+      setTournamentName(parsed.tournamentName ?? "");
 
       setSmallBlind(
-        parsed.smallBlind ?? "",
+        parsed.smallBlind
+          ? String(parsed.smallBlind)
+          : "",
       );
 
       setBigBlind(
-        parsed.bigBlind ?? "",
+        parsed.bigBlind
+          ? String(parsed.bigBlind)
+          : "",
       );
 
-      setAnte(parsed.ante ?? "");
+      setAnte(
+        parsed.ante !== undefined
+          ? String(parsed.ante)
+          : "",
+      );
 
       setHeroStack(
-        parsed.heroStack ?? "",
+        parsed.heroStack
+          ? String(parsed.heroStack)
+          : "",
       );
 
       setRemainingPlayers(
-        parsed.remainingPlayers ?? "",
+        parsed.remainingPlayers
+          ? String(parsed.remainingPlayers)
+          : "",
       );
 
       setPaidPlaces(
-        parsed.paidPlaces ?? "",
+        parsed.paidPlaces
+          ? String(parsed.paidPlaces)
+          : "",
       );
 
       setCurrentRank(
-        parsed.currentRank ?? "",
+        parsed.currentRank
+          ? String(parsed.currentRank)
+          : "",
       );
 
       if (
         parsed.phase &&
         tournamentPhases.some(
-          (item) =>
-            item.key === parsed.phase,
+          (item) => item.value === parsed.phase,
         )
       ) {
         setPhase(parsed.phase);
       }
 
-      setConsiderIcm(
-        Boolean(parsed.considerIcm),
-      );
+      setConsiderIcm(Boolean(parsed.considerIcm));
     } catch {
       localStorage.removeItem(
         "poker-read-tournament-current",
@@ -175,6 +171,7 @@ export default function TournamentNewHandPage() {
     if (
       !Number.isFinite(stack) ||
       !Number.isFinite(bb) ||
+      stack <= 0 ||
       bb <= 0
     ) {
       return null;
@@ -184,10 +181,7 @@ export default function TournamentNewHandPage() {
   }, [heroStack, bigBlind]);
 
   const distanceToMoney = useMemo(() => {
-    const remaining = Number(
-      remainingPlayers,
-    );
-
+    const remaining = Number(remainingPlayers);
     const paid = Number(paidPlaces);
 
     if (
@@ -202,98 +196,88 @@ export default function TournamentNewHandPage() {
     return remaining - paid;
   }, [remainingPlayers, paidPlaces]);
 
-  function saveAndContinue() {
+  function validate(): boolean {
     if (!tournamentName.trim()) {
-      setMessage(
-        "大会名を入力してください。",
-      );
-      return;
+      setMessage("大会名を入力してください。");
+      return false;
     }
 
-    if (
-      !smallBlind ||
-      !bigBlind ||
-      Number(smallBlind) <= 0 ||
-      Number(bigBlind) <= 0
-    ) {
-      setMessage(
-        "SBとBBを正しく入力してください。",
-      );
-      return;
+    const sb = Number(smallBlind);
+    const bb = Number(bigBlind);
+    const stack = Number(heroStack);
+    const remaining = Number(remainingPlayers);
+    const paid = Number(paidPlaces);
+    const rank = currentRank
+      ? Number(currentRank)
+      : null;
+
+    if (!sb || sb <= 0) {
+      setMessage("SBを入力してください。");
+      return false;
     }
 
-    if (
-      Number(smallBlind) >=
-      Number(bigBlind)
-    ) {
-      setMessage(
-        "SBはBBより小さい金額にしてください。",
-      );
-      return;
+    if (!bb || bb <= 0) {
+      setMessage("BBを入力してください。");
+      return false;
     }
 
-    if (
-      !heroStack ||
-      Number(heroStack) <= 0
-    ) {
-      setMessage(
-        "自分のスタックを入力してください。",
-      );
-      return;
+    if (sb >= bb) {
+      setMessage("SBはBBより小さくしてください。");
+      return false;
     }
 
-    if (
-      !remainingPlayers ||
-      Number(remainingPlayers) <= 1
-    ) {
+    if (!stack || stack <= 0) {
       setMessage(
-        "残り人数を入力してください。",
+        "自分のスタックをチップ数で入力してください。",
       );
-      return;
+      return false;
     }
 
-    if (
-      !paidPlaces ||
-      Number(paidPlaces) <= 0
-    ) {
-      setMessage(
-        "入賞人数を入力してください。",
-      );
-      return;
+    if (!remaining || remaining < 2) {
+      setMessage("残り人数を入力してください。");
+      return false;
     }
 
-    if (
-      Number(paidPlaces) >
-      Number(remainingPlayers)
-    ) {
+    if (!paid || paid <= 0) {
+      setMessage("入賞人数を入力してください。");
+      return false;
+    }
+
+    if (paid > remaining) {
       setMessage(
         "入賞人数は残り人数以下にしてください。",
       );
-      return;
+      return false;
     }
 
-    if (
-      currentRank &&
-      Number(currentRank) >
-        Number(remainingPlayers)
-    ) {
+    if (rank !== null && rank > remaining) {
       setMessage(
         "現在順位は残り人数以下にしてください。",
       );
+      return false;
+    }
+
+    return true;
+  }
+
+  function saveAndContinue() {
+    if (!validate()) {
       return;
     }
 
-    const previous =
-      localStorage.getItem(
-        "poker-read-tournament-current",
-      );
+    const bb = Number(bigBlind);
+    const stack = Number(heroStack);
+
+    const existingRaw = localStorage.getItem(
+      "poker-read-tournament-current",
+    );
 
     let existingId = "";
 
-    if (previous) {
+    if (existingRaw) {
       try {
         const parsed = JSON.parse(
-          previous,
+          existingRaw,
         ) as Partial<TournamentSetup>;
 
         existingId = parsed.id ?? "";
@@ -303,22 +287,25 @@ export default function TournamentNewHandPage() {
     }
 
     const setup: TournamentSetup = {
-      id:
-        existingId ||
-        crypto.randomUUID(),
-      tournamentName:
-        tournamentName.trim(),
-      smallBlind,
-      bigBlind,
-      ante: ante || "0",
-      heroStack,
-      remainingPlayers,
-      paidPlaces,
-      currentRank,
+      id: existingId || crypto.randomUUID(),
+      tournamentName: tournamentName.trim(),
+      smallBlind: Number(smallBlind),
+      bigBlind: bb,
+      ante: Number(ante || "0"),
+      heroStack: stack,
+      heroStackBb: Number(
+        (stack / bb).toFixed(1),
+      ),
+      remainingPlayers: Number(
+        remainingPlayers,
+      ),
+      paidPlaces: Number(paidPlaces),
+      currentRank: currentRank
+        ? Number(currentRank)
+        : null,
       phase,
       considerIcm,
-      createdAt:
-        new Date().toISOString(),
+      createdAt: new Date().toISOString(),
     };
 
     localStorage.setItem(
@@ -326,16 +313,10 @@ export default function TournamentNewHandPage() {
       JSON.stringify(setup),
     );
 
-    localStorage.setItem(
-      "poker-read-mode",
-      "tournament",
-    );
-
+    setPokerMode("tournament");
     setMessage("");
 
-    router.push(
-      "/tournament/hero-hand",
-    );
+    router.push("/hero-hand");
   }
 
   return (
@@ -343,14 +324,14 @@ export default function TournamentNewHandPage() {
       <div className="mx-auto max-w-md">
         <header className="mb-6">
           <Link
-            href="/tournament"
+            href="/new-hand"
             className="text-sm font-bold text-amber-300"
           >
-            ← トーナメントへ戻る
+            ← ゲーム選択へ戻る
           </Link>
 
           <p className="mt-6 text-xs font-black tracking-[0.2em] text-amber-300">
-            TOURNAMENT STEP 1
+            TOURNAMENT SETUP
           </p>
 
           <h1 className="mt-2 text-3xl font-black">
@@ -358,13 +339,10 @@ export default function TournamentNewHandPage() {
           </h1>
 
           <p className="mt-2 text-sm leading-7 text-white/60">
-            AIがスタック状況やICMを判断するために必要な情報です。
+            入力はすべてチップ数です。
+            BB表示は自動で計算されます。
           </p>
         </header>
-
-        <div className="mb-6 h-2 overflow-hidden rounded-full bg-white/10">
-          <div className="h-full w-1/6 rounded-full bg-gradient-to-r from-amber-300 to-amber-500" />
-        </div>
 
         <section className="rounded-3xl border border-amber-800/60 bg-gradient-to-br from-amber-950/70 to-black/30 p-5">
           <label
@@ -377,11 +355,12 @@ export default function TournamentNewHandPage() {
           <input
             id="tournament-name"
             value={tournamentName}
-            onChange={(event) =>
+            onChange={(event) => {
               setTournamentName(
                 event.target.value,
-              )
-            }
+              );
+              setMessage("");
+            }}
             placeholder="例：Sunday Main Event"
             className="mt-3 w-full rounded-2xl border border-white/10 bg-black/30 p-4 outline-none focus:border-amber-300"
           />
@@ -406,12 +385,12 @@ export default function TournamentNewHandPage() {
                 inputMode="numeric"
                 value={smallBlind}
                 onChange={(event) => {
-                  const value =
-                    event.target.value;
-
-                  if (onlyNumbers(value)) {
-                    setSmallBlind(value);
-                  }
+                  setSmallBlind(
+                    normalizeNumber(
+                      event.target.value,
+                    ),
+                  );
+                  setMessage("");
                 }}
                 placeholder="500"
                 className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-xl font-black outline-none focus:border-emerald-400"
@@ -431,12 +410,12 @@ export default function TournamentNewHandPage() {
                 inputMode="numeric"
                 value={bigBlind}
                 onChange={(event) => {
-                  const value =
-                    event.target.value;
-
-                  if (onlyNumbers(value)) {
-                    setBigBlind(value);
-                  }
+                  setBigBlind(
+                    normalizeNumber(
+                      event.target.value,
+                    ),
+                  );
+                  setMessage("");
                 }}
                 placeholder="1000"
                 className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-xl font-black outline-none focus:border-emerald-400"
@@ -457,14 +436,14 @@ export default function TournamentNewHandPage() {
               inputMode="numeric"
               value={ante}
               onChange={(event) => {
-                const value =
-                  event.target.value;
-
-                if (onlyNumbers(value)) {
-                  setAnte(value);
-                }
+                setAnte(
+                  normalizeNumber(
+                    event.target.value,
+                  ),
+                );
+                setMessage("");
               }}
-              placeholder="例：1000、なしなら0"
+              placeholder="なしの場合は0"
               className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-xl font-black outline-none focus:border-emerald-400"
             />
           </div>
@@ -483,39 +462,38 @@ export default function TournamentNewHandPage() {
             inputMode="numeric"
             value={heroStack}
             onChange={(event) => {
-              const value =
-                event.target.value;
-
-              if (onlyNumbers(value)) {
-                setHeroStack(value);
-              }
+              setHeroStack(
+                normalizeNumber(
+                  event.target.value,
+                ),
+              );
+              setMessage("");
             }}
             placeholder="例：45000"
             className="mt-3 w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-2xl font-black outline-none focus:border-emerald-400"
           />
 
-          {heroStack && (
-            <div className="mt-3 rounded-2xl bg-black/20 p-4">
-              <p className="text-sm text-white/50">
-                チップ：
-                <span className="ml-1 font-black text-white">
-                  {formatNumber(
-                    heroStack,
-                  )}
-                </span>
-              </p>
+          <div className="mt-3 rounded-2xl bg-black/20 p-4">
+            <p className="text-sm text-white/50">
+              チップ数
+            </p>
 
-              <p className="mt-2 text-xl font-black text-emerald-300">
-                {heroStackBb !== null
-                  ? `${Number(
-                      heroStackBb.toFixed(
-                        1,
-                      ),
-                    )}BB`
-                  : "BBを入力すると換算されます"}
-              </p>
-            </div>
-          )}
+            <p className="mt-1 text-xl font-black">
+              {formatChips(heroStack)} chips
+            </p>
+
+            <p className="mt-3 text-sm text-white/50">
+              BB換算
+            </p>
+
+            <p className="mt-1 text-3xl font-black text-emerald-300">
+              {heroStackBb !== null
+                ? `${Number(
+                    heroStackBb.toFixed(1),
+                  )}BB`
+                : "—"}
+            </p>
+          </div>
         </section>
 
         <section className="mt-4 rounded-3xl border border-white/10 bg-white/5 p-5">
@@ -537,14 +515,12 @@ export default function TournamentNewHandPage() {
                 inputMode="numeric"
                 value={remainingPlayers}
                 onChange={(event) => {
-                  const value =
-                    event.target.value;
-
-                  if (onlyNumbers(value)) {
-                    setRemainingPlayers(
-                      value,
-                    );
-                  }
+                  setRemainingPlayers(
+                    normalizeNumber(
+                      event.target.value,
+                    ),
+                  );
+                  setMessage("");
                 }}
                 placeholder="120"
                 className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-xl font-black outline-none focus:border-sky-400"
@@ -564,12 +540,12 @@ export default function TournamentNewHandPage() {
                 inputMode="numeric"
                 value={paidPlaces}
                 onChange={(event) => {
-                  const value =
-                    event.target.value;
-
-                  if (onlyNumbers(value)) {
-                    setPaidPlaces(value);
-                  }
+                  setPaidPlaces(
+                    normalizeNumber(
+                      event.target.value,
+                    ),
+                  );
+                  setMessage("");
                 }}
                 placeholder="100"
                 className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-xl font-black outline-none focus:border-sky-400"
@@ -593,12 +569,12 @@ export default function TournamentNewHandPage() {
               inputMode="numeric"
               value={currentRank}
               onChange={(event) => {
-                const value =
-                  event.target.value;
-
-                if (onlyNumbers(value)) {
-                  setCurrentRank(value);
-                }
+                setCurrentRank(
+                  normalizeNumber(
+                    event.target.value,
+                  ),
+                );
+                setMessage("");
               }}
               placeholder="例：35"
               className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-xl font-black outline-none focus:border-sky-400"
@@ -614,7 +590,7 @@ export default function TournamentNewHandPage() {
               <p className="mt-1 text-xl font-black">
                 {distanceToMoney <= 0
                   ? "すでに入賞圏内"
-                  : `あと${distanceToMoney}人敗退で入賞`}
+                  : `あと${distanceToMoney}人の敗退で入賞`}
               </p>
             </div>
           )}
@@ -629,14 +605,14 @@ export default function TournamentNewHandPage() {
             {tournamentPhases.map(
               (item) => (
                 <button
-                  key={item.key}
+                  key={item.value}
                   type="button"
                   onClick={() => {
-                    setPhase(item.key);
+                    setPhase(item.value);
                     setMessage("");
                   }}
-                  className={`rounded-2xl border p-4 text-left ${
-                    phase === item.key
+                  className={`rounded-2xl border p-4 text-left transition active:scale-95 ${
+                    phase === item.value
                       ? "border-amber-300 bg-amber-300 text-slate-950"
                       : "border-white/10 bg-black/20"
                   }`}
@@ -657,11 +633,12 @@ export default function TournamentNewHandPage() {
         <section className="mt-4 rounded-3xl border border-red-900/60 bg-red-950/25 p-5">
           <button
             type="button"
-            onClick={() =>
+            onClick={() => {
               setConsiderIcm(
                 !considerIcm,
-              )
-            }
+              );
+              setMessage("");
+            }}
             className="flex w-full items-center justify-between text-left"
           >
             <div className="pr-4">
@@ -670,7 +647,7 @@ export default function TournamentNewHandPage() {
               </p>
 
               <p className="mt-1 text-sm leading-6 text-white/50">
-                バブル・入賞後・FTでは賞金価値を考慮してAIが分析します。
+                バブル・入賞後・FTでは賞金価値も含めてAIが分析します。
               </p>
             </div>
 

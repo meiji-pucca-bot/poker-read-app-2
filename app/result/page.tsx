@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { getModeStorageKey, getPokerMode } from "@/lib/pokerMode";
 
 const ranks = [
   "A",
@@ -69,6 +70,22 @@ type StoredTable = {
   smallBlind?: string;
   bigBlind?: string;
   heroStack?: string;
+};
+
+type TournamentSetup = {
+  id?: string;
+  tournamentName?: string;
+  smallBlind?: number;
+  bigBlind?: number;
+  ante?: number;
+  heroStack?: number;
+  heroStackBb?: number;
+  remainingPlayers?: number;
+  paidPlaces?: number;
+  currentRank?: number | null;
+  phase?: string;
+  considerIcm?: boolean;
+  createdAt?: string;
 };
 
 type StoredPositions = {
@@ -178,14 +195,29 @@ export default function ResultPage() {
   const [memo, setMemo] = useState("");
   const [message, setMessage] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [mode, setMode] = useState<"cash" | "tournament">("cash");
+  const [tournamentSetup, setTournamentSetup] =
+    useState<TournamentSetup | null>(null);
 
   useEffect(() => {
+    const currentMode = getPokerMode();
+    setMode(currentMode);
+
+    const setup =
+      currentMode === "tournament"
+        ? safeParse<TournamentSetup>(
+            "poker-read-tournament-current",
+          )
+        : null;
+
+    setTournamentSetup(setup);
+
     const preflop = safeParse<StoredPreflop>(
-      "poker-read-preflop",
+      getModeStorageKey("poker-read-preflop"),
     );
 
     const positions = safeParse<StoredPositions>(
-      "poker-read-positions",
+      getModeStorageKey("poker-read-positions"),
     );
 
     const savedVillains =
@@ -425,34 +457,58 @@ export default function ResultPage() {
       return;
     }
 
-    const table = safeParse<StoredTable>(
-      "poker-read-current-table",
-    );
+    const table =
+      mode === "tournament"
+        ? {
+            id:
+              tournamentSetup?.id ??
+              crypto.randomUUID(),
+            venue:
+              tournamentSetup?.tournamentName ??
+              "Tournament",
+            tableName:
+              tournamentSetup?.phase ?? "",
+            smallBlind:
+              tournamentSetup?.smallBlind !== undefined
+                ? String(tournamentSetup.smallBlind)
+                : "",
+            bigBlind:
+              tournamentSetup?.bigBlind !== undefined
+                ? String(tournamentSetup.bigBlind)
+                : "",
+            heroStack:
+              tournamentSetup?.heroStack !== undefined
+                ? String(tournamentSetup.heroStack)
+                : "",
+          }
+        : safeParse<StoredTable>(
+            "poker-read-current-table",
+          );
 
     const positions =
       safeParse<StoredPositions>(
-        "poker-read-positions",
+        getModeStorageKey("poker-read-positions"),
       );
 
     const heroHand =
       safeParse<StoredHeroHand>(
-        "poker-read-hero-hand",
+        getModeStorageKey("poker-read-hero-hand"),
       );
 
     const preflop = safeParse<unknown>(
-      "poker-read-preflop",
+      getModeStorageKey("poker-read-preflop"),
     );
 
     const flop = safeParse<unknown>(
-      "poker-read-flop",
+      getModeStorageKey("poker-read-flop"),
     );
 
     const turn = safeParse<unknown>(
-      "poker-read-turn",
+      getModeStorageKey("poker-read-turn"),
     );
 
     const river = safeParse<unknown>(
-      "poker-read-river",
+      getModeStorageKey("poker-read-river"),
     );
 
     const savedAt =
@@ -499,6 +555,11 @@ export default function ResultPage() {
         crypto.randomUUID(),
       savedAt,
 
+      mode,
+      tournament:
+        mode === "tournament"
+          ? tournamentSetup
+          : undefined,
       table: table ?? {},
       positions: positions ?? {},
       heroHand: heroHand ?? {},
@@ -518,9 +579,12 @@ export default function ResultPage() {
       },
     };
 
+    const handsStorageKey =
+      getModeStorageKey("poker-read-hands");
+
     const previousHands =
       safeParse<unknown[]>(
-        "poker-read-hands",
+        handsStorageKey,
       );
 
     const hands = Array.isArray(
@@ -530,7 +594,7 @@ export default function ResultPage() {
       : [];
 
     localStorage.setItem(
-      "poker-read-hands",
+      handsStorageKey,
       JSON.stringify([
         hand,
         ...hands,
@@ -538,17 +602,17 @@ export default function ResultPage() {
     );
 
     [
-      "poker-read-hero-hand",
+      getModeStorageKey("poker-read-hero-hand"),
       "poker-read-hero-hand-draft",
-      "poker-read-positions",
+      getModeStorageKey("poker-read-positions"),
       "poker-read-positions-draft",
-      "poker-read-preflop",
+      getModeStorageKey("poker-read-preflop"),
       "poker-read-preflop-draft",
-      "poker-read-flop",
+      getModeStorageKey("poker-read-flop"),
       "poker-read-flop-draft",
-      "poker-read-turn",
+      getModeStorageKey("poker-read-turn"),
       "poker-read-turn-draft",
-      "poker-read-river",
+      getModeStorageKey("poker-read-river"),
       "poker-read-river-draft",
     ].forEach((key) => {
       localStorage.removeItem(key);
@@ -579,6 +643,19 @@ export default function ResultPage() {
           <p className="mb-2 text-sm font-bold text-emerald-400">
             STEP 8 / 結果
           </p>
+
+          {mode === "tournament" && (
+            <div className="mb-3 rounded-2xl border border-amber-700/60 bg-amber-950/30 p-3">
+              <p className="text-xs font-black text-amber-300">
+                🏆 トーナメントモード
+              </p>
+
+              <p className="mt-1 text-sm text-white/70">
+                {tournamentSetup?.tournamentName ||
+                  "大会名未設定"}
+              </p>
+            </div>
+          )}
 
           <h1 className="text-3xl font-bold">
             ハンドの結果を記録

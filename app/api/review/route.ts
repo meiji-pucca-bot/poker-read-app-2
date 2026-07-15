@@ -183,6 +183,16 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const hand = body?.hand;
+    const requestedMode =
+      body?.mode === "tournament"
+        ? "tournament"
+        : "cash";
+    const handMode =
+      hand?.mode === "tournament"
+        ? "tournament"
+        : requestedMode;
+    const isTournament =
+      handMode === "tournament";
 
     if (!hand) {
       return NextResponse.json(
@@ -203,6 +213,24 @@ export async function POST(request: Request) {
 
 入力されたハンド履歴を、勝敗ではなく「意思決定の質」で評価してください。
 
+${isTournament ? `
+【今回のゲーム形式】
+- トーナメントハンドとして分析する
+- キャッシュゲームの100BB基準をそのまま当てはめない
+- 入力されたチップ数をBBへ換算して判断する
+- BBアンティをプリフロップのポット計算に含める
+- 残り人数、入賞人数、現在順位、大会フェーズを確認する
+- considerIcmがtrue、またはバブル・入賞後・FTならICMを考慮する
+- ICMは「チップの価値が一定ではない」という意味を初心者向けに説明する
+- ショートスタックではPush/Fold、オープンオールイン、リスチールを検討する
+- ただし正確な賞金配分がない場合、ICMを断定せず傾向として説明する
+- 終了済みハンドの学習レビューとして回答する
+` : `
+【今回のゲーム形式】
+- キャッシュゲームハンドとして分析する
+- チップEV、ポジション、有効スタック、SPRを中心に判断する
+`}
+
 【分析時に必ず確認すること】
 - Heroのハンドとポジション
 - 相手の人数とポジション
@@ -215,6 +243,12 @@ export async function POST(request: Request) {
 - ボードの状況
 - ヘッズアップかマルチウェイか
 - 相手の想定レンジ
+${isTournament ? `- Heroと相手のスタックをBB換算した値
+- BBアンティを含む開始ポット
+- 残り人数、入賞人数、現在順位
+- 序盤・中盤・バブル・ITM・FT・HUのどの段階か
+- Push/Foldが必要なスタック帯か
+- ICMによってリスク許容度が変わる場面か` : ""}
 
 【回答ルール】
 - 日本語で回答する
@@ -339,6 +373,8 @@ export async function POST(request: Request) {
 `, 
 
       input: `
+ゲーム形式：${isTournament ? "トーナメント" : "キャッシュゲーム"}
+
 以下は終了済みのハンド履歴です。
 
 ${JSON.stringify(hand, null, 2)}

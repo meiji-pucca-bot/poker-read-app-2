@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { getModeStorageKey, getPokerMode } from "@/lib/pokerMode";
 
 const positionOptions = [
   {
@@ -83,8 +84,8 @@ type SavedPositions = {
   savedAt: string;
 };
 
-const draftStorageKey = "poker-read-positions-draft";
-const savedStorageKey = "poker-read-positions";
+const cashDraftStorageKey = "poker-read-positions-draft";
+const cashSavedStorageKey = "poker-read-positions";
 
 function positionInfo(position: Position) {
   return positionOptions.find(
@@ -100,10 +101,13 @@ export default function PositionsPage() {
 
   const [message, setMessage] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [mode, setMode] = useState<"cash" | "tournament">("cash");
 
   useEffect(() => {
+    setMode(getPokerMode());
+
     const savedDraft = localStorage.getItem(
-      draftStorageKey,
+      getModeStorageKey(cashDraftStorageKey),
     );
 
     if (savedDraft) {
@@ -117,7 +121,7 @@ export default function PositionsPage() {
         );
       } catch {
         localStorage.removeItem(
-          draftStorageKey,
+          getModeStorageKey(cashDraftStorageKey),
         );
       }
     }
@@ -131,7 +135,7 @@ export default function PositionsPage() {
     }
 
     localStorage.setItem(
-      draftStorageKey,
+      getModeStorageKey(cashDraftStorageKey),
       JSON.stringify({
         heroPosition,
       }),
@@ -150,11 +154,11 @@ export default function PositionsPage() {
     );
 
     localStorage.removeItem(
-      draftStorageKey,
+      getModeStorageKey(cashDraftStorageKey),
     );
 
     localStorage.removeItem(
-      savedStorageKey,
+      getModeStorageKey(cashSavedStorageKey),
     );
   }
 
@@ -174,12 +178,12 @@ export default function PositionsPage() {
     };
 
     localStorage.setItem(
-      savedStorageKey,
+      getModeStorageKey(cashSavedStorageKey),
       JSON.stringify(savedPositions),
     );
 
     localStorage.removeItem(
-      draftStorageKey,
+      getModeStorageKey(cashDraftStorageKey),
     );
 
     router.push("/preflop");

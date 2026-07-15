@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { getModeStorageKey, getPokerMode } from "@/lib/pokerMode";
 
 const ranks = [
   "A",
@@ -54,8 +55,8 @@ type SavedHeroHand = {
   notation: string;
 };
 
-const draftStorageKey = "poker-read-hero-hand-draft";
-const savedStorageKey = "poker-read-hero-hand";
+const cashDraftStorageKey = "poker-read-hero-hand-draft";
+const cashSavedStorageKey = "poker-read-hero-hand";
 
 function createEmptyCard(): Card {
   return {
@@ -142,10 +143,13 @@ export default function HeroHandPage() {
 
   const [message, setMessage] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [mode, setMode] = useState<"cash" | "tournament">("cash");
 
   useEffect(() => {
+    setMode(getPokerMode());
+
     const savedDraft = localStorage.getItem(
-      draftStorageKey,
+      getModeStorageKey(cashDraftStorageKey),
     );
 
     if (savedDraft) {
@@ -168,7 +172,7 @@ export default function HeroHandPage() {
           });
         }
       } catch {
-        localStorage.removeItem(draftStorageKey);
+        localStorage.removeItem(getModeStorageKey(cashDraftStorageKey));
       }
     }
 
@@ -181,7 +185,7 @@ export default function HeroHandPage() {
     }
 
     localStorage.setItem(
-      draftStorageKey,
+      getModeStorageKey(cashDraftStorageKey),
       JSON.stringify({
         firstCard,
         secondCard,
@@ -252,8 +256,8 @@ export default function HeroHandPage() {
     setActiveCard(1);
     setMessage("カード選択をクリアしました。");
 
-    localStorage.removeItem(draftStorageKey);
-    localStorage.removeItem(savedStorageKey);
+    localStorage.removeItem(getModeStorageKey(cashDraftStorageKey));
+    localStorage.removeItem(getModeStorageKey(cashSavedStorageKey));
   }
 
   function saveHand() {
@@ -271,11 +275,11 @@ export default function HeroHandPage() {
     };
 
     localStorage.setItem(
-      savedStorageKey,
+      getModeStorageKey(cashSavedStorageKey),
       JSON.stringify(savedHand),
     );
 
-    localStorage.removeItem(draftStorageKey);
+    localStorage.removeItem(getModeStorageKey(cashDraftStorageKey));
 
     router.push("/positions");
   }
@@ -285,7 +289,7 @@ export default function HeroHandPage() {
       <div className="mx-auto max-w-md">
         <header className="mb-6">
           <Link
-            href="/new-table"
+            href={mode === "tournament" ? "/tournament/new-hand" : "/new-table"}
             className="mb-5 inline-block text-sm font-semibold text-slate-400"
           >
             ← 前の画面へ戻る
@@ -294,6 +298,12 @@ export default function HeroHandPage() {
           <p className="mb-2 text-sm font-bold text-emerald-400">
             STEP 2 / 自分のハンド
           </p>
+
+          {mode === "tournament" && (
+            <div className="mb-3 inline-flex rounded-full border border-amber-500/40 bg-amber-950/40 px-3 py-1 text-xs font-black text-amber-300">
+              🏆 トーナメントモード
+            </div>
+          )}
 
           <h1 className="text-3xl font-bold">
             自分のハンドを選ぶ
