@@ -721,15 +721,48 @@ export default function StreetEntry({
     [nonFoldedPlayers, remainingStacks],
   );
 
-  const bettingClosedByAllIn =
-    nonFoldedPlayers.length >= 2 &&
-    allInPlayers.length >= 1 &&
-    actionablePlayers.length <= 1;
+ const highestContribution = Math.max(
+  0,
+  ...Object.values(contributions),
+);
 
-  const highestContribution = Math.max(
-    0,
-    ...Object.values(contributions),
-  );
+/**
+ * オールインしておらず、
+ * 最大投入額にまだ追いついていないプレイヤー。
+ *
+ * 一度チェック・コール済みでも、
+ * 後ろからオールインが入った場合は再び判断が必要。
+ */
+const playersNeedingAllInResponse =
+  nonFoldedPlayers.filter((player) => {
+    const playerIsAllIn = allInPlayers.some(
+      (allInPlayer) =>
+        allInPlayer.id === player.id,
+    );
+
+    if (playerIsAllIn) {
+      return false;
+    }
+
+    const playerContribution =
+      contributions[player.id] ?? 0;
+
+    return (
+      playerContribution <
+      highestContribution
+    );
+  });
+
+  const effectiveActionablePlayers =
+  playersNeedingAllInResponse.length > 0
+    ? playersNeedingAllInResponse
+    : actionablePlayers;
+
+const bettingClosedByAllIn =
+  nonFoldedPlayers.length >= 2 &&
+  allInPlayers.length >= 1 &&
+  playersNeedingAllInResponse.length === 0 &&
+  actionablePlayers.length <= 1;
 
   const activeContribution =
     activePlayerId
@@ -910,16 +943,125 @@ export default function StreetEntry({
     setMessage("");
   }
 
-  function moveToNextPlayer() {
+  function moveToNextPlayer(
+    completedAction: StreetAction,
+  ) {
     if (!activePlayer) {
       return;
     }
 
-    const activeIndex =
-      players.findIndex(
-        (player) =>
-          player.id === activePlayer.id,
+    /*
+     * Reactのstate更新前でも正しい次の手番を選べるように、
+     * 今回追加するアクションを含めた「仮の最新状態」をここで計算します。
+     *
+     * これにより、
+     * - 先にチェックしたHero
+     * - 後ろから1人または複数人がオールイン
+     * - Heroにコール／フォールド判断が戻る
+     * という流れを正しく処理できます。
+     */
+    const projectedFoldedPlayerIds =
+      new Set(foldedPlayerIds);
+
+    if (completedAction.action === "Fold") {
+      projectedFoldedPlayerIds.add(
+        completedAction.playerId,
       );
+    }
+
+    const projectedContributions = {
+      ...contributions,
+      [completedAction.playerId]:
+        completedAction.action === "Fold" ||
+        completedAction.action === "Check"
+          ? contributions[
+              completedAction.playerId
+            ] ?? 0
+          : Number(completedAction.amount) ||
+            contributions[
+              completedAction.playerId
+            ] ??
+            0,
+    };
+
+    const projectedRemainingStacks =
+      players.reduce<Record<string, number>>(
+        (result, player) => {
+          const startingStack =
+            Number(player.stack) || 0;
+
+          const spentBefore =
+            spentBeforeStreet[player.id] ?? 0;
+
+          const streetContribution =
+            projectedContributions[player.id] ??
+            0;
+
+          result[player.id] = Math.max(
+            0,
+            startingStack -
+              spentBefore -
+              streetContribution,
+          );
+
+          return result;
+        },
+        {},
+      );
+
+    const projectedNonFoldedPlayers =
+      players.filter(
+        (player) =>
+          !projectedFoldedPlayerIds.has(
+            player.id,
+          ),
+      );
+
+    const projectedHighestContribution =
+      Math.max(
+        0,
+        ...projectedNonFoldedPlayers.map(
+          (player) =>
+            projectedContributions[player.id] ??
+            0,
+        ),
+      );
+
+    /*
+     * 最高投入額に追いついていないプレイヤーは、
+     * 一度チェック／コール済みでも再び判断対象にします。
+     */
+    const responseCandidates =
+      projectedNonFoldedPlayers.filter(
+        (player) =>
+          (projectedRemainingStacks[player.id] ??
+            0) > 0 &&
+          (projectedContributions[player.id] ??
+            0) <
+            projectedHighestContribution,
+      );
+
+    /*
+     * 追加判断が不要な通常進行では、
+     * フォールド済み・オールイン済みを除いたプレイヤーへ回します。
+     */
+    const normalCandidates =
+      projectedNonFoldedPlayers.filter(
+        (player) =>
+          (projectedRemainingStacks[player.id] ??
+            0) > 0 &&
+          player.id !== activePlayer.id,
+      );
+
+    const candidates =
+      responseCandidates.length > 0
+        ? responseCandidates
+        : normalCandidates;
+
+    const activeIndex = players.findIndex(
+      (player) =>
+        player.id === activePlayer.id,
+    );
 
     for (
       let offset = 1;
@@ -934,13 +1076,27 @@ export default function StreetEntry({
         players[nextIndex];
 
       if (
-        !foldedPlayerIds.has(nextPlayer.id) &&
-        (remainingStacks[nextPlayer.id] ?? 0) > 0 &&
-        nextPlayer.id !== activePlayer.id
+        candidates.some(
+          (candidate) =>
+            candidate.id === nextPlayer.id,
+        )
       ) {
         setActivePlayerId(nextPlayer.id);
         return;
       }
+    }
+
+    /*
+     * 他に通常アクション可能な人がいなくても、
+     * 現在のプレイヤー自身が未対応なら、その人を維持します。
+     */
+    if (
+      responseCandidates.some(
+        (candidate) =>
+          candidate.id === activePlayer.id,
+      )
+    ) {
+      setActivePlayerId(activePlayer.id);
     }
   }
 
@@ -1137,7 +1293,7 @@ export default function StreetEntry({
     setAmount("");
     setMessage("");
 
-    moveToNextPlayer();
+    moveToNextPlayer(action);
   }
 
   function undoLastAction() {
@@ -1397,8 +1553,8 @@ export default function StreetEntry({
             </h2>
 
             <p className="mt-3 text-sm leading-7 text-slate-300">
-              残っているプレイヤーのうち、行動できるのが1人以下になりました。
-              以降はベットできないため、ボードカードだけ入力して次へ進んでください。
+              オールインに対する未回答のプレイヤーがいなくなりました。
+              以降は追加のベットができないため、ボードカードだけ入力して次へ進んでください。
             </p>
 
             <div className="mt-4 space-y-2">
