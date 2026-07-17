@@ -969,23 +969,23 @@ const bettingClosedByAllIn =
       );
     }
 
- const previousContribution =
-  contributions[completedAction.playerId] ?? 0;
+    const previousContribution =
+      contributions[completedAction.playerId] ?? 0;
 
-const completedAmount =
-  Number(completedAction.amount);
+    const completedAmount = Number(
+      completedAction.amount,
+    );
 
-const projectedContributions = {
-  ...contributions,
-  [completedAction.playerId]:
-    completedAction.action === "Fold" ||
-    completedAction.action === "Check"
-      ? previousContribution
-      : Number.isFinite(completedAmount) &&
-          completedAmount > 0
-        ? completedAmount
-        : previousContribution,
-};
+    const projectedContributions = {
+      ...contributions,
+      [completedAction.playerId]:
+        completedAction.action === "Fold" ||
+        completedAction.action === "Check"
+          ? previousContribution
+          : Number.isFinite(completedAmount) &&
+              completedAmount > 0
+            ? completedAmount
+            : previousContribution,
     };
 
     const projectedRemainingStacks =
