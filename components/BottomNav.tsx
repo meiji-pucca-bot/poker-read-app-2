@@ -10,7 +10,7 @@ type NavItem = {
   symbol: string;
 };
 
-const navItems: NavItem[] = [
+const cashNavItems: NavItem[] = [
   {
     href: "/",
     label: "ホーム",
@@ -37,22 +37,60 @@ const navItems: NavItem[] = [
   },
 ];
 
-function isActivePath(
-  pathname: string,
-  href: string,
-) {
-  if (href === "/") {
+const tournamentNavItems: NavItem[] = [
+  {
+    href: "/tournament",
+    label: "ホーム",
+    shortLabel: "HOME",
+    symbol: "♠",
+  },
+  {
+    href: "/tournament/new-hand?start=new",
+    label: "新規ハンド",
+    shortLabel: "NEW",
+    symbol: "♥",
+  },
+  {
+    href: "/tournament/history",
+    label: "履歴",
+    shortLabel: "HISTORY",
+    symbol: "♣",
+  },
+  {
+    href: "/tournament/review",
+    label: "AIレビュー",
+    shortLabel: "AI",
+    symbol: "♦",
+  },
+];
+
+function getPathOnly(href: string) {
+  return href.split("?")[0];
+}
+
+function isActivePath(pathname: string, href: string) {
+  const targetPath = getPathOnly(href);
+
+  if (targetPath === "/") {
     return pathname === "/";
   }
 
+  if (targetPath === "/tournament") {
+    return pathname === "/tournament";
+  }
+
   return (
-    pathname === href ||
-    pathname.startsWith(`${href}/`)
+    pathname === targetPath ||
+    pathname.startsWith(`${targetPath}/`)
   );
 }
 
 export default function BottomNav() {
   const pathname = usePathname();
+  const isTournament = pathname.startsWith("/tournament");
+  const navItems = isTournament
+    ? tournamentNavItems
+    : cashNavItems;
 
   return (
     <>
