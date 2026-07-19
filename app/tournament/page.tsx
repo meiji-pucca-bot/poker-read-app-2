@@ -253,7 +253,7 @@ export default function TournamentHomePage() {
 
       <div className="relative mx-auto max-w-md">
         <header className="mb-7">
-          <Link href="/new-hand" className="text-sm font-bold text-amber-300">
+          <Link href="/new-hand" className="relative z-20 inline-flex min-h-11 items-center rounded-xl px-2 text-sm font-bold text-amber-300 active:bg-white/10">
             ← モード選択へ戻る
           </Link>
 

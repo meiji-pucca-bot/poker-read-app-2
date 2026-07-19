@@ -285,12 +285,12 @@ export default function HeroHandPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 px-4 py-6 text-white">
+    <main className="min-h-screen bg-slate-950 px-4 pb-6 pt-[max(56px,calc(env(safe-area-inset-top)+20px))] text-white">
       <div className="mx-auto max-w-md">
         <header className="mb-6">
           <Link
             href={mode === "tournament" ? "/tournament/new-hand" : "/new-table"}
-            className="mb-5 inline-block text-sm font-semibold text-slate-400"
+            className="relative z-20 mb-5 inline-flex min-h-11 items-center rounded-xl px-2 text-sm font-semibold text-slate-400 active:bg-white/10"
           >
             ← 前の画面へ戻る
           </Link>

@@ -1270,12 +1270,12 @@ export default function DictionaryPage() {
   }, [category, importantOnly, search]);
 
   return (
-    <main className="min-h-screen bg-[#07150f] px-4 py-7 text-white">
+    <main className="min-h-screen bg-[#07150f] px-4 pb-7 pt-[max(56px,calc(env(safe-area-inset-top)+20px))] text-white">
       <div className="mx-auto max-w-md">
         <header className="mb-6">
           <Link
             href="/"
-            className="text-sm font-bold text-emerald-300"
+            className="relative z-20 inline-flex min-h-11 items-center rounded-xl px-2 text-sm font-bold text-emerald-300 active:bg-white/10"
           >
             ← ホームへ戻る
           </Link>

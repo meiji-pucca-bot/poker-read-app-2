@@ -543,7 +543,7 @@ export default function TournamentNewHandPage() {
 
           {distanceToMoney !== null && (
             <div className="mt-4 rounded-2xl border border-amber-800/60 bg-amber-950/30 p-4">
-              <p className="text-sm font-bold text-amber-300">入賞状況</p>
+              <p className="relative z-20 inline-flex min-h-11 items-center rounded-xl px-2 text-sm font-bold text-amber-300 active:bg-white/10">入賞状況</p>
               <p className="mt-1 text-xl font-black">
                 {distanceToMoney <= 0
                   ? "すでに入賞圏内"

@@ -325,7 +325,7 @@ function ActionTimeline({
           </p>
         </div>
 
-        <span className="text-sm font-bold text-emerald-300">
+        <span className="relative z-20 inline-flex min-h-11 items-center rounded-xl px-2 text-sm font-bold text-emerald-300 active:bg-white/10">
           {open ? "閉じる ▲" : "流れを見る ▼"}
         </span>
       </button>
@@ -709,12 +709,12 @@ function ReviewPageContent() {
   }
 
   return (
-    <main className="min-h-screen bg-[#07150f] px-4 py-7 text-white">
+    <main className="min-h-screen bg-[#07150f] px-4 pb-7 pt-[max(56px,calc(env(safe-area-inset-top)+20px))] text-white">
       <div className="mx-auto max-w-md">
         <header className="mb-6">
           <Link
             href="/"
-            className="text-sm font-bold text-emerald-300"
+            className="relative z-20 inline-flex min-h-11 items-center rounded-xl px-2 text-sm font-bold text-emerald-300 active:bg-white/10"
           >
             ← ホームへ戻る
           </Link>
@@ -1053,7 +1053,7 @@ export default function ReviewPage() {
   return (
     <Suspense
       fallback={
-        <main className="min-h-screen bg-[#07150f] px-4 py-7 text-white">
+        <main className="min-h-screen bg-[#07150f] px-4 pb-7 pt-[max(56px,calc(env(safe-area-inset-top)+20px))] text-white">
           <div className="mx-auto max-w-md">
             <section className="rounded-3xl border border-emerald-800 bg-emerald-950/30 p-6 text-center">
               <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-white/20 border-t-emerald-300" />

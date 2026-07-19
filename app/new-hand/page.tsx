@@ -7,7 +7,7 @@ export default function NewHandPage() {
 
         <Link
           href="/"
-          className="mb-6 inline-block text-sm font-semibold text-slate-400"
+          className="relative z-20 mb-6 inline-flex min-h-11 items-center rounded-xl px-2 text-sm font-semibold text-slate-400 active:bg-white/10"
         >
           ← ホームへ戻る
         </Link>
