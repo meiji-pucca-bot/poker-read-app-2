@@ -2,7 +2,7 @@ import Link from "next/link";
 
 export default function NewHandPage() {
   return (
-    <main className="min-h-screen bg-slate-950 p-6 text-white">
+     <main className="min-h-screen bg-slate-950 px-6 pb-6 pt-[max(56px,calc(env(safe-area-inset-top)+20px))] text-white">
       <div className="mx-auto max-w-md">
 
         <Link
@@ -40,7 +40,7 @@ export default function NewHandPage() {
           </Link>
 
           <Link
-            href="/tournament/new-hand"
+            href="/tournament"
             className="block rounded-2xl bg-sky-600 p-6"
           >
             <div className="text-2xl">
