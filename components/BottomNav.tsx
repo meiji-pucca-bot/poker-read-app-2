@@ -64,33 +64,23 @@ const tournamentNavItems: NavItem[] = [
   },
 ];
 
-function getPathOnly(href: string) {
+function stripQuery(href: string): string {
   return href.split("?")[0];
 }
 
-function isActivePath(pathname: string, href: string) {
-  const targetPath = getPathOnly(href);
+function isActivePath(pathname: string, href: string): boolean {
+  const target = stripQuery(href);
 
-  if (targetPath === "/") {
-    return pathname === "/";
-  }
+  if (target === "/") return pathname === "/";
+  if (target === "/tournament") return pathname === "/tournament";
 
-  if (targetPath === "/tournament") {
-    return pathname === "/tournament";
-  }
-
-  return (
-    pathname === targetPath ||
-    pathname.startsWith(`${targetPath}/`)
-  );
+  return pathname === target || pathname.startsWith(`${target}/`);
 }
 
 export default function BottomNav() {
   const pathname = usePathname();
   const isTournament = pathname.startsWith("/tournament");
-  const navItems = isTournament
-    ? tournamentNavItems
-    : cashNavItems;
+  const navItems = isTournament ? tournamentNavItems : cashNavItems;
 
   return (
     <>
@@ -99,10 +89,7 @@ export default function BottomNav() {
       <nav className="fixed bottom-0 left-0 right-0 z-50 px-3 pb-[max(12px,env(safe-area-inset-bottom))]">
         <div className="mx-auto grid max-w-md grid-cols-4 gap-1 rounded-[26px] border border-emerald-700/60 bg-[#06110d]/95 p-2 shadow-2xl shadow-black/60 backdrop-blur-xl">
           {navItems.map((item) => {
-            const active = isActivePath(
-              pathname,
-              item.href,
-            );
+            const active = isActivePath(pathname, item.href);
 
             return (
               <Link
@@ -121,8 +108,7 @@ export default function BottomNav() {
 
                 <span
                   className={`text-2xl font-black ${
-                    item.symbol === "♥" ||
-                    item.symbol === "♦"
+                    item.symbol === "♥" || item.symbol === "♦"
                       ? active
                         ? "text-red-700"
                         : "text-red-400"
