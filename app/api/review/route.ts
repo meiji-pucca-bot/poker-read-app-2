@@ -120,23 +120,18 @@ function normalizeReview(value: unknown): AiReview {
   return {
     totalScore,
     grade:
-      typeof review.grade === "string"
-        ? review.grade
-        : totalScore >= 90
-          ? "A+"
-          : totalScore >= 80
-            ? "A"
-            : totalScore >= 70
-              ? "B"
-              : totalScore >= 60
-                ? "C"
-                : "D",
+      totalScore >= 90
+        ? "S"
+        : totalScore >= 80
+          ? "A"
+          : totalScore >= 70
+            ? "B"
+            : totalScore >= 60
+              ? "C"
+              : "D",
     stars: Math.max(
       1,
-      Math.min(
-        5,
-        Math.round(Number(review.stars) || totalScore / 20),
-      ),
+      Math.min(5, Math.ceil(totalScore / 20)),
     ),
     shortSummary:
       typeof review.shortSummary === "string"
@@ -387,6 +382,7 @@ ${JSON.stringify(hand, null, 2)}
 
     return NextResponse.json({
       review,
+      reviewVersion: 2,
     });
   } catch (error) {
     console.error("AI review error:", error);

@@ -134,7 +134,7 @@ const actionNames: Record<string, string> = {
 };
 
 const reviewCacheKey =
-  "poker-read-tournament-ai-review-cache";
+  "poker-read-tournament-ai-review-cache-v2";
 
 function readHands(): StoredHand[] {
   const saved = localStorage.getItem(
