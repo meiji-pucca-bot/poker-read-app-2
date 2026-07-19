@@ -183,14 +183,17 @@ function calculatePreflopState(
   actions: PreflopAction[],
   smallBlind: string,
   bigBlind: string,
+  ante: string,
 ) {
-  const contributions = createInitialContributions(
+  // BBアンティはポットとBBの消費スタックには含めますが、
+  // コール額・レイズ額を決める「現在の投入額」には含めません。
+  const bettingContributions = createInitialContributions(
     smallBlind,
     bigBlind,
   );
 
   let highestContribution = Math.max(
-    ...Object.values(contributions),
+    ...Object.values(bettingContributions),
   );
 
   actions.forEach((action) => {
@@ -201,14 +204,21 @@ function calculatePreflopState(
       return;
     }
 
-    contributions[action.position] +=
+    bettingContributions[action.position] +=
       Number(action.addedAmount) || 0;
 
     highestContribution = Math.max(
       highestContribution,
-      contributions[action.position],
+      bettingContributions[action.position],
     );
   });
+
+  const contributions: ContributionMap = {
+    ...bettingContributions,
+    BB:
+      bettingContributions.BB +
+      (Number(ante) || 0),
+  };
 
   const pot = Object.values(contributions).reduce(
     (total, value) => total + value,
@@ -219,6 +229,7 @@ function calculatePreflopState(
     pot,
     highestContribution,
     contributions,
+    bettingContributions,
   };
 }
 
@@ -395,8 +406,9 @@ export default function PreflopPage() {
         actions,
         smallBlind,
         bigBlind,
+        ante,
       ),
-    [actions, smallBlind, bigBlind],
+    [actions, smallBlind, bigBlind, ante],
   );
 
   const selectedOption = actionOptions.find(
@@ -404,7 +416,7 @@ export default function PreflopPage() {
   );
 
   const activeContribution =
-    preflopState.contributions[activePosition];
+    preflopState.bettingContributions[activePosition];
 
   const automaticCallAmount = Math.max(
     0,
@@ -422,9 +434,16 @@ export default function PreflopPage() {
       ? Number(heroStack) || 0
       : Number(activeVillain?.stack) || 0;
 
+  const activeForcedAnte =
+    mode === "tournament" && activePosition === "BB"
+      ? Number(ante) || 0
+      : 0;
+
   const activeRemainingStack = Math.max(
     0,
-    activeStartingStack - activeContribution,
+    activeStartingStack -
+      activeContribution -
+      activeForcedAnte,
   );
 
   const previewAddedAmount = useMemo(() => {
@@ -617,6 +636,7 @@ export default function PreflopPage() {
       targetActions,
       smallBlind,
       bigBlind,
+      ante,
     );
 
     const heroFolded = Boolean(
@@ -791,9 +811,16 @@ export default function PreflopPage() {
             )?.stack,
           ) || 0;
 
+    const effectiveForcedAnte =
+      mode === "tournament" && activePosition === "BB"
+        ? Number(ante) || 0
+        : 0;
+
     const effectiveRemainingStack = Math.max(
       0,
-      effectiveStartingStack - activeContribution,
+      effectiveStartingStack -
+        activeContribution -
+        effectiveForcedAnte,
     );
 
     if (
@@ -865,7 +892,8 @@ export default function PreflopPage() {
 
       if (
         effectiveStartingStack > 0 &&
-        finalAmount > effectiveStartingStack
+        finalAmount >
+          effectiveStartingStack - effectiveForcedAnte
       ) {
         setMessage(
           "スタックを超える金額は入力できません。",
@@ -902,7 +930,10 @@ export default function PreflopPage() {
             automaticCallAmount,
         );
     } else if (selectedAction === "All-in") {
-      finalAmount = effectiveStartingStack;
+      finalAmount = Math.max(
+        activeContribution,
+        effectiveStartingStack - effectiveForcedAnte,
+      );
     } else if (selectedOption?.needsAmount) {
       finalAmount = Number(amount);
     }
@@ -1097,6 +1128,9 @@ export default function PreflopPage() {
         endingPot: preflopState.pot,
         contributions:
           preflopState.contributions,
+        bettingContributions:
+          preflopState.bettingContributions,
+        bbAnte: Number(ante) || 0,
         heroPosition,
         villains: participatingVillains,
         heroFolded: currentFlowState.heroFolded,

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import SplashGate from "@/components/SplashGate";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -42,7 +43,11 @@ export const metadata: Metadata = {
   },
 };
 export const viewport = {
-  themeColor: "#0b6b3a",
+  themeColor: "#0b1f16",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
@@ -55,7 +60,11 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+  <SplashGate>
+    {children}
+  </SplashGate>
+</body>
     </html>
   );
 }

@@ -206,3 +206,45 @@ body {
     animation-delay: 0ms;
   }
 }
+/* Splash animation */
+
+@keyframes splashFade {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  70% {
+    opacity: 1;
+    transform: scale(1.03);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1.08);
+    visibility: hidden;
+  }
+}
+
+.splash-screen {
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    #0b6b3a 0%,
+    #06301d 100%
+  );
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+
+  animation: splashFade 1.2s ease forwards;
+}
+
+.splash-logo {
+  width: 120px;
+  height: 120px;
+  border-radius: 30px;
+  box-shadow: 0 0 40px rgba(255,255,255,.25);
+}

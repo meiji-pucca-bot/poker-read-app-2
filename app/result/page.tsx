@@ -80,11 +80,15 @@ type TournamentSetup = {
   ante?: number;
   heroStack?: number;
   heroStackBb?: number;
+  startingPlayers?: number;
   remainingPlayers?: number;
   paidPlaces?: number;
+  registrationStatus?: "open" | "closed";
+  averageStack?: number | null;
   currentRank?: number | null;
   phase?: string;
   considerIcm?: boolean;
+  prizeStructure?: "standard" | "winner-take-all" | "unknown";
   createdAt?: string;
 };
 
@@ -101,6 +105,16 @@ type StoredHeroHand = {
 
 type StoredPreflop = {
   villains?: Villain[];
+};
+
+type ResultDraft = {
+  result?: ResultType | "";
+  showdown?: "yes" | "no" | "";
+  villains?: ShowdownVillain[];
+  activeVillainId?: string;
+  activeCard?: 1 | 2;
+  importance?: number;
+  memo?: string;
 };
 
 const emptyCard: Card = {
@@ -236,16 +250,71 @@ export default function ResultPage() {
         secondCard: createEmptyCard(),
       }));
 
-    setVillains(loadedVillains);
+    const resultDraft = safeParse<ResultDraft>(
+      getModeStorageKey("poker-read-result-draft"),
+    );
 
-    if (loadedVillains.length > 0) {
-      setActiveVillainId(
-        loadedVillains[0].id,
-      );
+    if (resultDraft) {
+      setResult(resultDraft.result ?? "");
+      setShowdown(resultDraft.showdown ?? "");
+      setImportance(resultDraft.importance ?? 1);
+      setMemo(resultDraft.memo ?? "");
+      setActiveCard(resultDraft.activeCard ?? 1);
+
+      if (
+        Array.isArray(resultDraft.villains) &&
+        resultDraft.villains.length > 0
+      ) {
+        setVillains(resultDraft.villains);
+        setActiveVillainId(
+          resultDraft.activeVillainId ||
+            resultDraft.villains[0].id,
+        );
+      } else {
+        setVillains(loadedVillains);
+        if (loadedVillains.length > 0) {
+          setActiveVillainId(loadedVillains[0].id);
+        }
+      }
+    } else {
+      setVillains(loadedVillains);
+      if (loadedVillains.length > 0) {
+        setActiveVillainId(loadedVillains[0].id);
+      }
     }
 
     setLoaded(true);
   }, []);
+
+  useEffect(() => {
+    if (!loaded) {
+      return;
+    }
+
+    const draft: ResultDraft = {
+      result,
+      showdown,
+      villains,
+      activeVillainId,
+      activeCard,
+      importance,
+      memo,
+    };
+
+    localStorage.setItem(
+      getModeStorageKey("poker-read-result-draft"),
+      JSON.stringify(draft),
+    );
+  }, [
+    result,
+    showdown,
+    villains,
+    activeVillainId,
+    activeCard,
+    importance,
+    memo,
+    loaded,
+  ]);
 
   const activeVillain = villains.find(
     (villain) =>
@@ -580,7 +649,9 @@ export default function ResultPage() {
     };
 
     const handsStorageKey =
-      getModeStorageKey("poker-read-hands");
+      mode === "tournament"
+        ? "poker-read-tournament-hands"
+        : getModeStorageKey("poker-read-hands");
 
     const previousHands =
       safeParse<unknown[]>(
@@ -614,11 +685,16 @@ export default function ResultPage() {
       "poker-read-turn-draft",
       getModeStorageKey("poker-read-river"),
       "poker-read-river-draft",
+      getModeStorageKey("poker-read-result-draft"),
     ].forEach((key) => {
       localStorage.removeItem(key);
     });
 
-    router.push("/history");
+    router.push(
+      mode === "tournament"
+        ? "/tournament/history"
+        : "/history",
+    );
   }
 
   if (!loaded) {

@@ -5,56 +5,66 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { setPokerMode } from "@/lib/pokerMode";
 
-const tournamentPhases = [
-  {
-    value: "early",
-    label: "序盤",
-    description: "スタックが深く、入賞まではまだ遠い",
-  },
-  {
-    value: "middle",
-    label: "中盤",
-    description: "ブラインドが上がり、スタック差が出始める",
-  },
-  {
-    value: "bubble",
-    label: "バブル",
-    description: "あと少しで入賞が決まる",
-  },
-  {
-    value: "itm",
-    label: "入賞後",
-    description: "すでに賞金圏内に入っている",
-  },
-  {
-    value: "final-table",
-    label: "ファイナルテーブル",
-    description: "最後の1卓で順位賞金を争う",
-  },
-  {
-    value: "heads-up",
-    label: "ヘッズアップ",
-    description: "残り2人で優勝を争う",
-  },
-] as const;
-
+type RegistrationStatus = "open" | "closed";
+type PrizeStructure = "standard" | "winner-take-all" | "unknown";
 type TournamentPhase =
-  (typeof tournamentPhases)[number]["value"];
+  | "registration"
+  | "early"
+  | "middle"
+  | "bubble"
+  | "itm"
+  | "final-table"
+  | "heads-up";
 
 type TournamentSetup = {
   id: string;
   tournamentName: string;
+  startingPlayers: number;
+  remainingPlayers: number;
+  paidPlaces: number;
+  registrationStatus: RegistrationStatus;
+  averageStack: number | null;
   smallBlind: number;
   bigBlind: number;
   ante: number;
   heroStack: number;
   heroStackBb: number;
-  remainingPlayers: number;
-  paidPlaces: number;
   currentRank: number | null;
   phase: TournamentPhase;
   considerIcm: boolean;
+  prizeStructure: PrizeStructure;
   createdAt: string;
+  updatedAt: string;
+};
+
+type TournamentDraft = {
+  tournamentName: string;
+  startingPlayers: string;
+  remainingPlayers: string;
+  paidPlaces: string;
+  registrationStatus: RegistrationStatus;
+  averageStack: string;
+  smallBlind: string;
+  bigBlind: string;
+  ante: string;
+  heroStack: string;
+  currentRank: string;
+  considerIcm: boolean;
+  prizeStructure: PrizeStructure;
+};
+
+const CURRENT_KEY = "poker-read-tournament-current";
+const DRAFT_KEY = "poker-read-tournament-setup-draft";
+const SAME_CONDITION_KEY = "poker-read-tournament-same-condition";
+
+const phaseLabels: Record<TournamentPhase, string> = {
+  registration: "レイトレジスト中",
+  early: "序盤",
+  middle: "中盤",
+  bubble: "バブル",
+  itm: "インマネ",
+  "final-table": "ファイナルテーブル",
+  "heads-up": "ヘッズアップ",
 };
 
 function normalizeNumber(value: string): string {
@@ -63,127 +73,216 @@ function normalizeNumber(value: string): string {
 
 function formatChips(value: string | number): string {
   const number = Number(value);
+  if (!Number.isFinite(number)) return "0";
+  return number.toLocaleString("ja-JP");
+}
 
-  if (!Number.isFinite(number)) {
-    return "0";
+function detectTournamentPhase({
+  startingPlayers,
+  remainingPlayers,
+  paidPlaces,
+  registrationStatus,
+}: {
+  startingPlayers: number;
+  remainingPlayers: number;
+  paidPlaces: number;
+  registrationStatus: RegistrationStatus;
+}): TournamentPhase {
+  if (registrationStatus === "open") return "registration";
+  if (remainingPlayers <= 2) return "heads-up";
+  if (remainingPlayers <= 9) return "final-table";
+  if (paidPlaces > 0 && remainingPlayers <= paidPlaces) return "itm";
+  if (
+    paidPlaces > 0 &&
+    remainingPlayers <= Math.ceil(paidPlaces * 1.15)
+  ) {
+    return "bubble";
   }
 
-  return number.toLocaleString("ja-JP");
+  if (startingPlayers > 0) {
+    const remainingRate = remainingPlayers / startingPlayers;
+    if (remainingRate >= 0.7) return "early";
+  }
+
+  return "middle";
+}
+
+function safeParse<T>(value: string | null): T | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
+  }
 }
 
 export default function TournamentNewHandPage() {
   const router = useRouter();
 
   const [tournamentName, setTournamentName] = useState("");
+  const [startingPlayers, setStartingPlayers] = useState("");
+  const [remainingPlayers, setRemainingPlayers] = useState("");
+  const [paidPlaces, setPaidPlaces] = useState("");
+  const [registrationStatus, setRegistrationStatus] =
+    useState<RegistrationStatus>("open");
+  const [averageStack, setAverageStack] = useState("");
   const [smallBlind, setSmallBlind] = useState("");
   const [bigBlind, setBigBlind] = useState("");
   const [ante, setAnte] = useState("");
   const [heroStack, setHeroStack] = useState("");
-  const [remainingPlayers, setRemainingPlayers] = useState("");
-  const [paidPlaces, setPaidPlaces] = useState("");
   const [currentRank, setCurrentRank] = useState("");
-  const [phase, setPhase] =
-    useState<TournamentPhase>("early");
   const [considerIcm, setConsiderIcm] = useState(false);
+  const [prizeStructure, setPrizeStructure] =
+    useState<PrizeStructure>("standard");
   const [message, setMessage] = useState("");
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     setPokerMode("tournament");
 
-    const saved = localStorage.getItem(
-      "poker-read-tournament-current",
-    );
+    const params = new URLSearchParams(window.location.search);
+    const startMode = params.get("start");
 
-    if (!saved) {
-      return;
+    let saved: Partial<TournamentDraft> | Partial<TournamentSetup> | null = null;
+
+    if (startMode === "new") {
+      localStorage.removeItem(DRAFT_KEY);
+      localStorage.removeItem(CURRENT_KEY);
+      localStorage.removeItem(SAME_CONDITION_KEY);
+    } else if (startMode === "same") {
+      saved = safeParse<Partial<TournamentDraft>>(
+        localStorage.getItem(SAME_CONDITION_KEY),
+      );
+
+      localStorage.removeItem(SAME_CONDITION_KEY);
+      localStorage.removeItem(DRAFT_KEY);
+      localStorage.removeItem(CURRENT_KEY);
+    } else {
+      const draft = safeParse<Partial<TournamentDraft>>(
+        localStorage.getItem(DRAFT_KEY),
+      );
+      const current = safeParse<Partial<TournamentSetup>>(
+        localStorage.getItem(CURRENT_KEY),
+      );
+
+      saved = draft ?? current;
     }
 
-    try {
-      const parsed = JSON.parse(
-        saved,
-      ) as Partial<TournamentSetup>;
-
-      setTournamentName(parsed.tournamentName ?? "");
-
-      setSmallBlind(
-        parsed.smallBlind
-          ? String(parsed.smallBlind)
+    if (saved) {
+      setTournamentName(saved.tournamentName ?? "");
+      setStartingPlayers(
+        saved.startingPlayers !== undefined
+          ? String(saved.startingPlayers)
           : "",
       );
-
-      setBigBlind(
-        parsed.bigBlind
-          ? String(parsed.bigBlind)
-          : "",
-      );
-
-      setAnte(
-        parsed.ante !== undefined
-          ? String(parsed.ante)
-          : "",
-      );
-
-      setHeroStack(
-        parsed.heroStack
-          ? String(parsed.heroStack)
-          : "",
-      );
-
       setRemainingPlayers(
-        parsed.remainingPlayers
-          ? String(parsed.remainingPlayers)
+        saved.remainingPlayers !== undefined
+          ? String(saved.remainingPlayers)
           : "",
       );
-
       setPaidPlaces(
-        parsed.paidPlaces
-          ? String(parsed.paidPlaces)
+        saved.paidPlaces !== undefined ? String(saved.paidPlaces) : "",
+      );
+      setRegistrationStatus(saved.registrationStatus ?? "open");
+      setAverageStack(
+        saved.averageStack !== undefined && saved.averageStack !== null
+          ? String(saved.averageStack)
           : "",
       );
-
-      setCurrentRank(
-        parsed.currentRank
-          ? String(parsed.currentRank)
-          : "",
+      setSmallBlind(
+        saved.smallBlind !== undefined ? String(saved.smallBlind) : "",
       );
+      setBigBlind(
+        saved.bigBlind !== undefined ? String(saved.bigBlind) : "",
+      );
+      setAnte(saved.ante !== undefined ? String(saved.ante) : "");
+      setConsiderIcm(Boolean(saved.considerIcm));
+      setPrizeStructure(saved.prizeStructure ?? "standard");
 
-      if (
-        parsed.phase &&
-        tournamentPhases.some(
-          (item) => item.value === parsed.phase,
-        )
-      ) {
-        setPhase(parsed.phase);
+      // 同条件で新規の場合、ハンドごとに変化する情報は引き継がない
+      if (startMode !== "same") {
+        setHeroStack(
+          saved.heroStack !== undefined ? String(saved.heroStack) : "",
+        );
+        setCurrentRank(
+          saved.currentRank !== undefined && saved.currentRank !== null
+            ? String(saved.currentRank)
+            : "",
+        );
       }
+    }
 
-      setConsiderIcm(Boolean(parsed.considerIcm));
-    } catch {
-      localStorage.removeItem(
-        "poker-read-tournament-current",
+    setLoaded(true);
+
+    if (startMode) {
+      window.history.replaceState(
+        {},
+        "",
+        window.location.pathname,
       );
     }
   }, []);
 
+  useEffect(() => {
+    if (!loaded) return;
+
+    const draft: TournamentDraft = {
+      tournamentName,
+      startingPlayers,
+      remainingPlayers,
+      paidPlaces,
+      registrationStatus,
+      averageStack,
+      smallBlind,
+      bigBlind,
+      ante,
+      heroStack,
+      currentRank,
+      considerIcm,
+      prizeStructure,
+    };
+
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  }, [
+    tournamentName,
+    startingPlayers,
+    remainingPlayers,
+    paidPlaces,
+    registrationStatus,
+    averageStack,
+    smallBlind,
+    bigBlind,
+    ante,
+    heroStack,
+    currentRank,
+    considerIcm,
+    prizeStructure,
+    loaded,
+  ]);
+
   const heroStackBb = useMemo(() => {
     const stack = Number(heroStack);
     const bb = Number(bigBlind);
-
-    if (
-      !Number.isFinite(stack) ||
-      !Number.isFinite(bb) ||
-      stack <= 0 ||
-      bb <= 0
-    ) {
+    if (!Number.isFinite(stack) || !Number.isFinite(bb) || stack <= 0 || bb <= 0) {
       return null;
     }
-
     return stack / bb;
   }, [heroStack, bigBlind]);
+
+  const phase = useMemo(
+    () =>
+      detectTournamentPhase({
+        startingPlayers: Number(startingPlayers),
+        remainingPlayers: Number(remainingPlayers),
+        paidPlaces: Number(paidPlaces),
+        registrationStatus,
+      }),
+    [startingPlayers, remainingPlayers, paidPlaces, registrationStatus],
+  );
 
   const distanceToMoney = useMemo(() => {
     const remaining = Number(remainingPlayers);
     const paid = Number(paidPlaces);
-
     if (
       !Number.isFinite(remaining) ||
       !Number.isFinite(paid) ||
@@ -192,68 +291,71 @@ export default function TournamentNewHandPage() {
     ) {
       return null;
     }
-
     return remaining - paid;
   }, [remainingPlayers, paidPlaces]);
 
   function validate(): boolean {
-    if (!tournamentName.trim()) {
-      setMessage("大会名を入力してください。");
-      return false;
-    }
-
-    const sb = Number(smallBlind);
-    const bb = Number(bigBlind);
-    const stack = Number(heroStack);
+    const start = Number(startingPlayers);
     const remaining = Number(remainingPlayers);
     const paid = Number(paidPlaces);
-    const rank = currentRank
-      ? Number(currentRank)
-      : null;
+    const sb = Number(smallBlind);
+    const bb = Number(bigBlind);
+    const bbAnte = Number(ante || "0");
+    const stack = Number(heroStack);
+    const average = averageStack ? Number(averageStack) : null;
+    const rank = currentRank ? Number(currentRank) : null;
 
-    if (!sb || sb <= 0) {
-      setMessage("SBを入力してください。");
+    if (!start || start < 2) {
+      setMessage("開始参加人数を入力してください。");
       return false;
     }
-
-    if (!bb || bb <= 0) {
-      setMessage("BBを入力してください。");
-      return false;
-    }
-
-    if (sb >= bb) {
-      setMessage("SBはBBより小さくしてください。");
-      return false;
-    }
-
-    if (!stack || stack <= 0) {
-      setMessage(
-        "自分のスタックをチップ数で入力してください。",
-      );
-      return false;
-    }
-
     if (!remaining || remaining < 2) {
-      setMessage("残り人数を入力してください。");
+      setMessage("現在の残り人数を入力してください。");
       return false;
     }
-
+    if (remaining > start) {
+      setMessage("残り人数は開始参加人数以下にしてください。");
+      return false;
+    }
     if (!paid || paid <= 0) {
       setMessage("入賞人数を入力してください。");
       return false;
     }
-
-    if (paid > remaining) {
-      setMessage(
-        "入賞人数は残り人数以下にしてください。",
-      );
+    // 入賞後は「残り人数 < 入賞人数」が正常なので、ここでは弾きません。
+    if (paid > start) {
+      setMessage("入賞人数は開始参加人数以下にしてください。");
       return false;
     }
-
-    if (rank !== null && rank > remaining) {
-      setMessage(
-        "現在順位は残り人数以下にしてください。",
-      );
+    if (!sb || sb <= 0) {
+      setMessage("SBを入力してください。");
+      return false;
+    }
+    if (!bb || bb <= 0) {
+      setMessage("BBを入力してください。");
+      return false;
+    }
+    if (sb >= bb) {
+      setMessage("SBはBBより小さくしてください。");
+      return false;
+    }
+    if (!Number.isFinite(bbAnte) || bbAnte < 0) {
+      setMessage("BBアンティは0以上で入力してください。");
+      return false;
+    }
+    if (!stack || stack <= 0) {
+      setMessage("自分のスタックを入力してください。");
+      return false;
+    }
+    if (stack < bb + bbAnte) {
+      setMessage("HeroスタックはBBとBBアンティの合計以上にしてください。");
+      return false;
+    }
+    if (average !== null && (!Number.isFinite(average) || average <= 0)) {
+      setMessage("平均スタックは空欄、または1以上で入力してください。");
+      return false;
+    }
+    if (rank !== null && (!Number.isFinite(rank) || rank < 1 || rank > remaining)) {
+      setMessage("現在順位は1以上、残り人数以下にしてください。");
       return false;
     }
 
@@ -261,104 +363,92 @@ export default function TournamentNewHandPage() {
   }
 
   function saveAndContinue() {
-    if (!validate()) {
-      return;
-    }
+    if (!validate()) return;
 
+    const existing = safeParse<Partial<TournamentSetup>>(
+      localStorage.getItem(CURRENT_KEY),
+    );
+    const now = new Date().toISOString();
     const bb = Number(bigBlind);
     const stack = Number(heroStack);
 
-    const existingRaw = localStorage.getItem(
-      "poker-read-tournament-current",
-    );
-
-    let existingId = "";
-
-    if (existingRaw) {
-      try {
-        const parsed = JSON.parse(
-          existingRaw,
-        ) as Partial<TournamentSetup>;
-
-        existingId = parsed.id ?? "";
-      } catch {
-        existingId = "";
-      }
-    }
-
     const setup: TournamentSetup = {
-      id: existingId || crypto.randomUUID(),
+      id: existing?.id || crypto.randomUUID(),
       tournamentName: tournamentName.trim(),
+      startingPlayers: Number(startingPlayers),
+      remainingPlayers: Number(remainingPlayers),
+      paidPlaces: Number(paidPlaces),
+      registrationStatus,
+      averageStack: averageStack ? Number(averageStack) : null,
       smallBlind: Number(smallBlind),
       bigBlind: bb,
       ante: Number(ante || "0"),
       heroStack: stack,
-      heroStackBb: Number(
-        (stack / bb).toFixed(1),
-      ),
-      remainingPlayers: Number(
-        remainingPlayers,
-      ),
-      paidPlaces: Number(paidPlaces),
-      currentRank: currentRank
-        ? Number(currentRank)
-        : null,
+      heroStackBb: Number((stack / bb).toFixed(1)),
+      currentRank: currentRank ? Number(currentRank) : null,
       phase,
       considerIcm,
-      createdAt: new Date().toISOString(),
+      prizeStructure,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
     };
 
-    localStorage.setItem(
-      "poker-read-tournament-current",
-      JSON.stringify(setup),
-    );
+    localStorage.setItem(CURRENT_KEY, JSON.stringify(setup));
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({
+      tournamentName,
+      startingPlayers,
+      remainingPlayers,
+      paidPlaces,
+      registrationStatus,
+      averageStack,
+      smallBlind,
+      bigBlind,
+      ante,
+      heroStack,
+      currentRank,
+      considerIcm,
+      prizeStructure,
+    } satisfies TournamentDraft));
 
     setPokerMode("tournament");
     setMessage("");
-
     router.push("/hero-hand");
+  }
+
+  if (!loaded) {
+    return (
+      <main className="min-h-screen bg-[#120b05] p-6 text-white">
+        読み込み中...
+      </main>
+    );
   }
 
   return (
     <main className="min-h-screen bg-[#120b05] px-4 py-7 text-white">
       <div className="mx-auto max-w-md">
         <header className="mb-6">
-          <Link
-            href="/new-hand"
-            className="text-sm font-bold text-amber-300"
-          >
+          <Link href="/new-hand" className="text-sm font-bold text-amber-300">
             ← ゲーム選択へ戻る
           </Link>
-
           <p className="mt-6 text-xs font-black tracking-[0.2em] text-amber-300">
             TOURNAMENT SETUP
           </p>
-
-          <h1 className="mt-2 text-3xl font-black">
-            大会情報を入力
-          </h1>
-
+          <h1 className="mt-2 text-3xl font-black">大会情報を入力</h1>
           <p className="mt-2 text-sm leading-7 text-white/60">
-            入力はすべてチップ数です。
-            BB表示は自動で計算されます。
+            入力内容は自動保存されます。戻る操作をしても復元されます。
           </p>
         </header>
 
         <section className="rounded-3xl border border-amber-800/60 bg-gradient-to-br from-amber-950/70 to-black/30 p-5">
-          <label
-            htmlFor="tournament-name"
-            className="font-black"
-          >
+          <label htmlFor="tournament-name" className="font-black">
             大会名
+            <span className="ml-2 text-xs font-normal text-white/40">任意</span>
           </label>
-
           <input
             id="tournament-name"
             value={tournamentName}
             onChange={(event) => {
-              setTournamentName(
-                event.target.value,
-              );
+              setTournamentName(event.target.value);
               setMessage("");
             }}
             placeholder="例：Sunday Main Event"
@@ -367,226 +457,93 @@ export default function TournamentNewHandPage() {
         </section>
 
         <section className="mt-4 rounded-3xl border border-white/10 bg-white/5 p-5">
-          <h2 className="text-lg font-black">
-            ブラインド・アンティ
-          </h2>
+          <h2 className="text-lg font-black">大会の現在状況</h2>
 
           <div className="mt-4 grid grid-cols-2 gap-3">
-            <div>
-              <label
-                htmlFor="tournament-sb"
-                className="text-sm font-bold text-white/60"
-              >
-                SB
-              </label>
-
-              <input
-                id="tournament-sb"
-                inputMode="numeric"
-                value={smallBlind}
-                onChange={(event) => {
-                  setSmallBlind(
-                    normalizeNumber(
-                      event.target.value,
-                    ),
-                  );
-                  setMessage("");
-                }}
-                placeholder="500"
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-xl font-black outline-none focus:border-emerald-400"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="tournament-bb"
-                className="text-sm font-bold text-white/60"
-              >
-                BB
-              </label>
-
-              <input
-                id="tournament-bb"
-                inputMode="numeric"
-                value={bigBlind}
-                onChange={(event) => {
-                  setBigBlind(
-                    normalizeNumber(
-                      event.target.value,
-                    ),
-                  );
-                  setMessage("");
-                }}
-                placeholder="1000"
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-xl font-black outline-none focus:border-emerald-400"
-              />
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <label
-              htmlFor="tournament-ante"
-              className="text-sm font-bold text-white/60"
-            >
-              BBアンティ
-            </label>
-
-            <input
-              id="tournament-ante"
-              inputMode="numeric"
-              value={ante}
-              onChange={(event) => {
-                setAnte(
-                  normalizeNumber(
-                    event.target.value,
-                  ),
-                );
+            <NumberField
+              id="starting-players"
+              label="開始参加人数"
+              value={startingPlayers}
+              placeholder="500"
+              onChange={(value) => {
+                setStartingPlayers(value);
                 setMessage("");
               }}
-              placeholder="なしの場合は0"
-              className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-xl font-black outline-none focus:border-emerald-400"
+            />
+            <NumberField
+              id="remaining-players"
+              label="残り人数"
+              value={remainingPlayers}
+              placeholder="120"
+              onChange={(value) => {
+                setRemainingPlayers(value);
+                setMessage("");
+              }}
+            />
+            <NumberField
+              id="paid-places"
+              label="入賞人数"
+              value={paidPlaces}
+              placeholder="75"
+              onChange={(value) => {
+                setPaidPlaces(value);
+                setMessage("");
+              }}
+            />
+            <NumberField
+              id="current-rank"
+              label="現在順位（任意）"
+              value={currentRank}
+              placeholder="35"
+              onChange={(value) => {
+                setCurrentRank(value);
+                setMessage("");
+              }}
             />
           </div>
-        </section>
 
-        <section className="mt-4 rounded-3xl border border-emerald-800/60 bg-emerald-950/30 p-5">
-          <label
-            htmlFor="tournament-stack"
-            className="font-black"
-          >
-            自分のスタック
-          </label>
-
-          <input
-            id="tournament-stack"
-            inputMode="numeric"
-            value={heroStack}
-            onChange={(event) => {
-              setHeroStack(
-                normalizeNumber(
-                  event.target.value,
-                ),
-              );
-              setMessage("");
-            }}
-            placeholder="例：45000"
-            className="mt-3 w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-2xl font-black outline-none focus:border-emerald-400"
-          />
-
-          <div className="mt-3 rounded-2xl bg-black/20 p-4">
-            <p className="text-sm text-white/50">
-              チップ数
-            </p>
-
-            <p className="mt-1 text-xl font-black">
-              {formatChips(heroStack)} chips
-            </p>
-
-            <p className="mt-3 text-sm text-white/50">
-              BB換算
-            </p>
-
-            <p className="mt-1 text-3xl font-black text-emerald-300">
-              {heroStackBb !== null
-                ? `${Number(
-                    heroStackBb.toFixed(1),
-                  )}BB`
-                : "—"}
-            </p>
-          </div>
-        </section>
-
-        <section className="mt-4 rounded-3xl border border-white/10 bg-white/5 p-5">
-          <h2 className="text-lg font-black">
-            大会の現在状況
-          </h2>
-
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <div>
-              <label
-                htmlFor="remaining-players"
-                className="text-sm font-bold text-white/60"
-              >
-                残り人数
-              </label>
-
-              <input
-                id="remaining-players"
-                inputMode="numeric"
-                value={remainingPlayers}
-                onChange={(event) => {
-                  setRemainingPlayers(
-                    normalizeNumber(
-                      event.target.value,
-                    ),
-                  );
-                  setMessage("");
-                }}
-                placeholder="120"
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-xl font-black outline-none focus:border-sky-400"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="paid-places"
-                className="text-sm font-bold text-white/60"
-              >
-                入賞人数
-              </label>
-
-              <input
-                id="paid-places"
-                inputMode="numeric"
-                value={paidPlaces}
-                onChange={(event) => {
-                  setPaidPlaces(
-                    normalizeNumber(
-                      event.target.value,
-                    ),
-                  );
-                  setMessage("");
-                }}
-                placeholder="100"
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-xl font-black outline-none focus:border-sky-400"
-              />
+          <div className="mt-4">
+            <p className="text-sm font-bold text-white/60">レイトレジスト</p>
+            <div className="mt-2 grid grid-cols-2 gap-3">
+              {([
+                ["open", "レジスト中"],
+                ["closed", "レジスト終了"],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => {
+                    setRegistrationStatus(value);
+                    setMessage("");
+                  }}
+                  className={`rounded-2xl border p-4 font-black transition active:scale-95 ${
+                    registrationStatus === value
+                      ? "border-amber-300 bg-amber-300 text-slate-950"
+                      : "border-white/10 bg-black/20"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
 
           <div className="mt-4">
-            <label
-              htmlFor="current-rank"
-              className="text-sm font-bold text-white/60"
-            >
-              現在順位
-              <span className="ml-2 text-xs font-normal text-white/30">
-                任意
-              </span>
-            </label>
-
-            <input
-              id="current-rank"
-              inputMode="numeric"
-              value={currentRank}
-              onChange={(event) => {
-                setCurrentRank(
-                  normalizeNumber(
-                    event.target.value,
-                  ),
-                );
+            <NumberField
+              id="average-stack"
+              label="平均スタック（任意）"
+              value={averageStack}
+              placeholder="35000"
+              onChange={(value) => {
+                setAverageStack(value);
                 setMessage("");
               }}
-              placeholder="例：35"
-              className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-xl font-black outline-none focus:border-sky-400"
             />
           </div>
 
           {distanceToMoney !== null && (
             <div className="mt-4 rounded-2xl border border-amber-800/60 bg-amber-950/30 p-4">
-              <p className="text-sm font-bold text-amber-300">
-                入賞までの目安
-              </p>
-
+              <p className="text-sm font-bold text-amber-300">入賞状況</p>
               <p className="mt-1 text-xl font-black">
                 {distanceToMoney <= 0
                   ? "すでに入賞圏内"
@@ -594,77 +551,122 @@ export default function TournamentNewHandPage() {
               </p>
             </div>
           )}
+
+          <div className="mt-4 rounded-2xl border border-sky-800/60 bg-sky-950/30 p-4">
+            <p className="text-sm font-bold text-sky-300">大会段階（自動判定）</p>
+            <p className="mt-1 text-2xl font-black">{phaseLabels[phase]}</p>
+          </div>
         </section>
 
         <section className="mt-4 rounded-3xl border border-white/10 bg-white/5 p-5">
-          <h2 className="text-lg font-black">
-            トーナメントの段階
-          </h2>
-
+          <h2 className="text-lg font-black">ブラインド・BBアンティ</h2>
           <div className="mt-4 grid grid-cols-2 gap-3">
-            {tournamentPhases.map(
-              (item) => (
-                <button
-                  key={item.value}
-                  type="button"
-                  onClick={() => {
-                    setPhase(item.value);
-                    setMessage("");
-                  }}
-                  className={`rounded-2xl border p-4 text-left transition active:scale-95 ${
-                    phase === item.value
-                      ? "border-amber-300 bg-amber-300 text-slate-950"
-                      : "border-white/10 bg-black/20"
-                  }`}
-                >
-                  <span className="block font-black">
-                    {item.label}
-                  </span>
+            <NumberField
+              id="tournament-sb"
+              label="SB"
+              value={smallBlind}
+              placeholder="500"
+              onChange={(value) => {
+                setSmallBlind(value);
+                setMessage("");
+              }}
+            />
+            <NumberField
+              id="tournament-bb"
+              label="BB"
+              value={bigBlind}
+              placeholder="1000"
+              onChange={(value) => {
+                setBigBlind(value);
+                setMessage("");
+              }}
+            />
+          </div>
+          <div className="mt-4">
+            <NumberField
+              id="tournament-ante"
+              label="BBアンティ"
+              value={ante}
+              placeholder="1000（なしは0）"
+              onChange={(value) => {
+                setAnte(value);
+                setMessage("");
+              }}
+            />
+          </div>
+          <p className="mt-3 text-xs leading-5 text-white/45">
+            BBアンティは開始ポットへ加算し、BBプレイヤーのスタックから差し引きます。コール額には含めません。
+          </p>
+        </section>
 
-                  <span className="mt-1 block text-xs leading-5 opacity-70">
-                    {item.description}
-                  </span>
-                </button>
-              ),
+        <section className="mt-4 rounded-3xl border border-emerald-800/60 bg-emerald-950/30 p-5">
+          <NumberField
+            id="tournament-stack"
+            label="自分のスタック"
+            value={heroStack}
+            placeholder="45000"
+            onChange={(value) => {
+              setHeroStack(value);
+              setMessage("");
+            }}
+          />
+          <div className="mt-3 rounded-2xl bg-black/20 p-4">
+            <p className="text-sm text-white/50">チップ数</p>
+            <p className="mt-1 text-xl font-black">{formatChips(heroStack)} chips</p>
+            <p className="mt-3 text-sm text-white/50">BB換算</p>
+            <p className="mt-1 text-3xl font-black text-emerald-300">
+              {heroStackBb !== null ? `${Number(heroStackBb.toFixed(1))}BB` : "—"}
+            </p>
+            {averageStack && Number(bigBlind) > 0 && (
+              <p className="mt-3 text-sm text-white/60">
+                平均：{Number((Number(averageStack) / Number(bigBlind)).toFixed(1))}BB
+              </p>
             )}
           </div>
         </section>
 
-        <section className="mt-4 rounded-3xl border border-red-900/60 bg-red-950/25 p-5">
+        <section className="mt-4 rounded-3xl border border-white/10 bg-white/5 p-5">
+          <h2 className="text-lg font-black">賞金・ICM</h2>
+          <label className="mt-4 block text-sm font-bold text-white/60">
+            賞金構造
+          </label>
+          <select
+            value={prizeStructure}
+            onChange={(event) => {
+              setPrizeStructure(event.target.value as PrizeStructure);
+              setMessage("");
+            }}
+            className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 p-4 outline-none"
+          >
+            <option value="standard">通常（順位ごと）</option>
+            <option value="winner-take-all">勝者総取り</option>
+            <option value="unknown">不明</option>
+          </select>
+
           <button
             type="button"
             onClick={() => {
-              setConsiderIcm(
-                !considerIcm,
-              );
+              setConsiderIcm((current) => !current);
               setMessage("");
             }}
-            className="flex w-full items-center justify-between text-left"
+            className={`mt-4 flex w-full items-center justify-between rounded-2xl border p-4 text-left ${
+              considerIcm
+                ? "border-red-300 bg-red-300 text-slate-950"
+                : "border-red-900/60 bg-red-950/25"
+            }`}
           >
-            <div className="pr-4">
-              <p className="font-black text-red-200">
-                ICMを考慮する
-              </p>
-
-              <p className="mt-1 text-sm leading-6 text-white/50">
-                バブル・入賞後・FTでは賞金価値も含めてAIが分析します。
+            <div>
+              <p className="font-black">ICMを考慮する</p>
+              <p className="mt-1 text-xs opacity-70">
+                バブル・入賞後・FTなどで賞金価値も分析します。
               </p>
             </div>
-
-            <span
-              className={`flex h-8 w-14 shrink-0 items-center rounded-full p-1 transition ${
-                considerIcm
-                  ? "justify-end bg-amber-300"
-                  : "justify-start bg-white/15"
-              }`}
-            >
-              <span className="h-6 w-6 rounded-full bg-white shadow" />
-            </span>
+            <span className="text-xl font-black">{considerIcm ? "ON" : "OFF"}</span>
           </button>
         </section>
 
         {message && (
-          <p className="mt-4 rounded-2xl border border-red-800 bg-red-950/40 p-4 text-sm text-red-200">
+          <p className="mt-4 rounded-2xl border border-red-500/40 bg-red-950/50 p-4 text-sm font-bold text-red-200">
             {message}
           </p>
         )}
@@ -672,11 +674,41 @@ export default function TournamentNewHandPage() {
         <button
           type="button"
           onClick={saveAndContinue}
-          className="mt-6 w-full rounded-3xl bg-gradient-to-r from-amber-300 to-amber-500 p-5 text-lg font-black text-slate-950 shadow-xl shadow-amber-950/40 active:scale-95"
+          className="mt-6 w-full rounded-2xl bg-amber-300 px-5 py-4 text-lg font-black text-slate-950 transition active:scale-95"
         >
-          保存して自分のハンドへ
+          Heroハンド入力へ進む
         </button>
       </div>
     </main>
+  );
+}
+
+function NumberField({
+  id,
+  label,
+  value,
+  placeholder,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label htmlFor={id} className="text-sm font-bold text-white/60">
+        {label}
+      </label>
+      <input
+        id={id}
+        inputMode="numeric"
+        value={value}
+        onChange={(event) => onChange(normalizeNumber(event.target.value))}
+        placeholder={placeholder}
+        className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-xl font-black outline-none focus:border-amber-300"
+      />
+    </div>
   );
 }
