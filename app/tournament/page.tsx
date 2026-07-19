@@ -244,7 +244,7 @@ export default function TournamentHomePage() {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#120b05] px-4 py-7 text-white">
+    <main className="relative min-h-screen overflow-hidden bg-[#120b05] px-4 pb-7 pt-[max(56px,calc(env(safe-area-inset-top)+20px))] text-white">
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute left-1/2 top-[-150px] h-[330px] w-[330px] -translate-x-1/2 rounded-full bg-amber-400/20 blur-3xl" />
         <div className="absolute -left-24 top-1/3 h-60 w-60 rounded-full bg-red-500/10 blur-3xl" />
@@ -253,7 +253,7 @@ export default function TournamentHomePage() {
 
       <div className="relative mx-auto max-w-md">
         <header className="mb-7">
-          <Link href="/" className="text-sm font-bold text-amber-300">
+          <Link href="/new-hand" className="text-sm font-bold text-amber-300">
             ← モード選択へ戻る
           </Link>
 

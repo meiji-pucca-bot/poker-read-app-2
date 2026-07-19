@@ -143,8 +143,7 @@ export default function TournamentNewHandPage() {
     const params = new URLSearchParams(window.location.search);
     const startMode = params.get("start");
 
-    let saved: Partial<TournamentDraft> | Partial<TournamentSetup> | null =
-      null;
+    let saved: Partial<TournamentDraft> | Partial<TournamentSetup> | null = null;
 
     if (startMode === "new") {
       localStorage.removeItem(DRAFT_KEY);
@@ -200,6 +199,7 @@ export default function TournamentNewHandPage() {
       setConsiderIcm(Boolean(saved.considerIcm));
       setPrizeStructure(saved.prizeStructure ?? "standard");
 
+      // 同条件で新規の場合、ハンドごとに変化する情報は引き継がない
       if (startMode !== "same") {
         setHeroStack(
           saved.heroStack !== undefined ? String(saved.heroStack) : "",
@@ -215,7 +215,11 @@ export default function TournamentNewHandPage() {
     setLoaded(true);
 
     if (startMode) {
-      window.history.replaceState({}, "", window.location.pathname);
+      window.history.replaceState(
+        {},
+        "",
+        window.location.pathname,
+      );
     }
   }, []);
 
@@ -413,7 +417,7 @@ export default function TournamentNewHandPage() {
 
   if (!loaded) {
     return (
-      <main className="min-h-screen bg-[#120b05] px-6 pb-6 pt-[max(24px,env(safe-area-inset-top))] text-white">
+      <main className="min-h-screen bg-[#120b05] px-6 pb-6 pt-[max(56px,calc(env(safe-area-inset-top)+20px))] text-white">
         読み込み中...
       </main>
     );
@@ -424,7 +428,7 @@ export default function TournamentNewHandPage() {
       <div className="mx-auto max-w-md">
         <header className="mb-6">
           <Link href="/tournament" className="relative z-20 inline-flex min-h-11 items-center rounded-xl px-2 text-sm font-bold text-amber-300 active:bg-white/10">
-            ← ゲーム選択へ戻る
+            ← トーナメントモードへ戻る
           </Link>
           <p className="mt-6 text-xs font-black tracking-[0.2em] text-amber-300">
             TOURNAMENT SETUP
