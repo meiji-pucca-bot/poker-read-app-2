@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 
 type ResultFilter = "all" | "win" | "lose" | "chop";
 type ReviewFilter = "all" | "reviewed" | "unreviewed";
+type FavoriteFilter = "all" | "favorites";
 type SortType = "newest" | "oldest" | "scoreHigh" | "importanceHigh";
 
 type Card = {
@@ -98,6 +99,7 @@ type CachedReview = {
 };
 
 const reviewCacheKey = "poker-read-ai-review-cache";
+const favoriteStorageKey = "poker-read-favorite-hands";
 
 const resultFilters: { key: ResultFilter; label: string }[] = [
   { key: "all", label: "すべて" },
@@ -125,6 +127,21 @@ function safeParseReviewCache(): Record<string, CachedReview> {
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     return {};
+  }
+}
+
+
+
+function safeParseFavorites(): string[] {
+  const saved = localStorage.getItem(favoriteStorageKey);
+  if (!saved) return [];
+  try {
+    const parsed = JSON.parse(saved);
+    return Array.isArray(parsed)
+      ? parsed.filter((value): value is string => typeof value === "string")
+      : [];
+  } catch {
+    return [];
   }
 }
 
@@ -316,10 +333,12 @@ function StreetSummary({
 export default function HistoryPage() {
   const [hands, setHands] = useState<StoredHand[]>([]);
   const [reviewCache, setReviewCache] = useState<Record<string, CachedReview>>({});
+  const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [openHandId, setOpenHandId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [resultFilter, setResultFilter] = useState<ResultFilter>("all");
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
+  const [favoriteFilter, setFavoriteFilter] = useState<FavoriteFilter>("all");
   const [positionFilter, setPositionFilter] = useState("all");
   const [sortType, setSortType] = useState<SortType>("newest");
   const [loaded, setLoaded] = useState(false);
@@ -327,6 +346,7 @@ export default function HistoryPage() {
   useEffect(() => {
     setHands(safeParseHands());
     setReviewCache(safeParseReviewCache());
+    setFavoriteIds(safeParseFavorites());
     setLoaded(true);
   }, []);
 
@@ -370,8 +390,16 @@ export default function HistoryPage() {
       const matchesPosition =
         positionFilter === "all" ||
         hand.positions?.heroPosition === positionFilter;
+      const matchesFavorite =
+        favoriteFilter === "all" || favoriteIds.includes(hand.id);
 
-      return matchesSearch && matchesResult && matchesReview && matchesPosition;
+      return (
+        matchesSearch &&
+        matchesResult &&
+        matchesReview &&
+        matchesPosition &&
+        matchesFavorite
+      );
     });
 
     return [...matchedHands].sort((a, b) => {
@@ -396,6 +424,8 @@ export default function HistoryPage() {
       return new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime();
     });
   }, [
+    favoriteFilter,
+    favoriteIds,
     hands,
     positionFilter,
     resultFilter,
@@ -427,6 +457,15 @@ export default function HistoryPage() {
     );
   }, [hands, reviewCache]);
 
+  function toggleFavorite(handId: string) {
+    const nextFavoriteIds = favoriteIds.includes(handId)
+      ? favoriteIds.filter((id) => id !== handId)
+      : [...favoriteIds, handId];
+
+    setFavoriteIds(nextFavoriteIds);
+    localStorage.setItem(favoriteStorageKey, JSON.stringify(nextFavoriteIds));
+  }
+
   function deleteHand(handId: string) {
     if (!window.confirm("このハンドを削除しますか？")) return;
 
@@ -439,6 +478,10 @@ export default function HistoryPage() {
     setReviewCache(nextCache);
     localStorage.setItem(reviewCacheKey, JSON.stringify(nextCache));
 
+    const nextFavoriteIds = favoriteIds.filter((id) => id !== handId);
+    setFavoriteIds(nextFavoriteIds);
+    localStorage.setItem(favoriteStorageKey, JSON.stringify(nextFavoriteIds));
+
     if (openHandId === handId) setOpenHandId(null);
   }
 
@@ -448,8 +491,10 @@ export default function HistoryPage() {
     }
     localStorage.removeItem("poker-read-hands");
     localStorage.removeItem(reviewCacheKey);
+    localStorage.removeItem(favoriteStorageKey);
     setHands([]);
     setReviewCache({});
+    setFavoriteIds([]);
     setOpenHandId(null);
   }
 
@@ -580,6 +625,24 @@ export default function HistoryPage() {
             </div>
 
             <div className="mt-4">
+              <button
+                type="button"
+                onClick={() =>
+                  setFavoriteFilter(
+                    favoriteFilter === "favorites" ? "all" : "favorites",
+                  )
+                }
+                className={`w-full rounded-xl border p-3 text-left font-black ${
+                  favoriteFilter === "favorites"
+                    ? "border-amber-500 bg-amber-300 text-amber-950"
+                    : "border-white/10 bg-black/30 text-white/70"
+                }`}
+              >
+                ⭐ お気に入りだけ表示
+              </button>
+            </div>
+
+            <div className="mt-4">
               <label htmlFor="sort-type" className="text-xs font-black text-white/45">
                 並び順
               </label>
@@ -618,6 +681,7 @@ export default function HistoryPage() {
                 setSearch("");
                 setResultFilter("all");
                 setReviewFilter("all");
+                setFavoriteFilter("all");
                 setPositionFilter("all");
                 setSortType("newest");
               }}
@@ -665,9 +729,31 @@ export default function HistoryPage() {
                         </p>
                       </div>
 
-                      <span className={`rounded-full border px-3 py-1 text-sm font-black ${style.chip}`}>
-                        {style.label}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          aria-label={
+                            favoriteIds.includes(hand.id)
+                              ? "お気に入りから外す"
+                              : "お気に入りに追加"
+                          }
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleFavorite(hand.id);
+                          }}
+                          className={`flex h-10 w-10 items-center justify-center rounded-full border text-xl ${
+                            favoriteIds.includes(hand.id)
+                              ? "border-amber-500 bg-amber-300 text-amber-950"
+                              : "border-white/10 bg-black/20 text-white/35"
+                          }`}
+                        >
+                          {favoriteIds.includes(hand.id) ? "★" : "☆"}
+                        </button>
+
+                        <span className={`rounded-full border px-3 py-1 text-sm font-black ${style.chip}`}>
+                          {style.label}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="mt-4 flex flex-wrap gap-2">
