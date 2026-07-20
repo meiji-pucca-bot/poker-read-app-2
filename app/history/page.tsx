@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import BottomNav from "@/components/BottomNav";
 import { useEffect, useMemo, useState } from "react";
 
 type ResultFilter = "all" | "win" | "lose" | "chop";
@@ -835,7 +834,7 @@ export default function HistoryPage() {
         )}
       </div>
 
-      <BottomNav />
+      
     </main>
   );
 }

@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import BottomNav from "@/components/BottomNav";
 import { useSearchParams } from "next/navigation";
 import {
   Suspense,
@@ -1146,7 +1145,7 @@ function ReviewPageContent() {
         )}
       </div>
 
-      <BottomNav />
+      
     </main>
   );
 }

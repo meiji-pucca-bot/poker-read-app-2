@@ -1,6 +1,5 @@
 "use client";
 
-import BottomNav from "@/components/BottomNav";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
@@ -1471,7 +1470,7 @@ export default function DictionaryPage() {
         </section>
       </div>
 
-      <BottomNav />
+      
     </main>
   );
 }
