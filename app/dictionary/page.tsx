@@ -1,7 +1,8 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type PokerTerm = {
   term: string;
@@ -1229,11 +1230,61 @@ function Stars({ count }: { count: number }) {
   );
 }
 
+
+const FAVORITES_KEY = "poker-read-dictionary-favorites";
+
+function getKbAdvice(item: PokerTerm) {
+  if (item.importance >= 5) {
+    return `「${item.term}」は実戦でよく出る重要語だよ。まずは意味と実戦例をセットで覚えよう！`;
+  }
+
+  if (item.category === "トーナメント") {
+    return "トーナメントではスタック量や残り人数と一緒に考えると、意味がつかみやすいよ。";
+  }
+
+  if (item.category === "プリフロップ") {
+    return "プリフロップでは、自分のポジションと相手のアクションを先に確認しよう。";
+  }
+
+  if (item.category === "ベット・アクション") {
+    return "ベットの名前だけでなく、『何のために行うか』まで覚えると実戦で使いやすいよ。";
+  }
+
+  return "一度で完璧に覚えなくて大丈夫。分からなくなったら、また辞典を開こう！";
+}
+
 export default function DictionaryPage() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("すべて");
   const [openTerm, setOpenTerm] = useState<string | null>(null);
   const [importantOnly, setImportantOnly] = useState(false);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [favorites, setFavorites] = useState<string[]>([]);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(FAVORITES_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setFavorites(parsed.filter((value) => typeof value === "string"));
+        }
+      }
+    } catch {
+      setFavorites([]);
+    }
+  }, []);
+
+  function toggleFavorite(term: string) {
+    setFavorites((current) => {
+      const next = current.includes(term)
+        ? current.filter((item) => item !== term)
+        : [...current, term];
+
+      window.localStorage.setItem(FAVORITES_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
 
   const filteredTerms = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -1246,6 +1297,9 @@ export default function DictionaryPage() {
         const matchesImportance =
           !importantOnly || item.importance >= 5;
 
+        const matchesFavorite =
+          !favoritesOnly || favorites.includes(item.term);
+
         const matchesSearch =
           !keyword ||
           item.term.toLowerCase().includes(keyword) ||
@@ -1256,6 +1310,7 @@ export default function DictionaryPage() {
         return (
           matchesCategory &&
           matchesImportance &&
+          matchesFavorite &&
           matchesSearch
         );
       })
@@ -1266,7 +1321,7 @@ export default function DictionaryPage() {
 
         return a.term.localeCompare(b.term, "ja");
       });
-  }, [category, importantOnly, search]);
+  }, [category, favorites, favoritesOnly, importantOnly, search]);
 
   return (
     <main className="min-h-screen bg-[#07150f] px-4 pb-7 pt-[max(56px,calc(env(safe-area-inset-top)+20px))] text-white">
@@ -1299,6 +1354,26 @@ export default function DictionaryPage() {
             日本語・英語の両方から検索できます。
             用語をタップすると、意味・実戦例・覚え方を確認できます。
           </p>
+
+          <div className="mt-5 flex items-center gap-4 rounded-3xl border border-emerald-700/60 bg-emerald-950/45 p-4">
+            <div className="h-16 w-16 shrink-0 overflow-hidden rounded-2xl border border-emerald-400/30">
+              <Image
+                src="/icon-512.png"
+                alt="KB先生"
+                width={64}
+                height={64}
+                className="h-full w-full object-cover"
+              />
+            </div>
+            <div>
+              <p className="text-xs font-black tracking-[0.18em] text-emerald-300">
+                KB TEACHER
+              </p>
+              <p className="mt-1 text-sm font-bold leading-6 text-white/80">
+                分からない言葉を見つけたら、ここで一緒に確認しよう！
+              </p>
+            </div>
+          </div>
         </header>
 
         <section className="rounded-3xl border border-emerald-800/60 bg-gradient-to-br from-emerald-950 to-slate-950 p-5 shadow-xl">
@@ -1328,17 +1403,31 @@ export default function DictionaryPage() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setImportantOnly(!importantOnly)}
-              className={`rounded-2xl border px-4 py-3 text-sm font-black transition active:scale-95 ${
-                importantOnly
-                  ? "border-amber-300 bg-amber-300 text-slate-950"
-                  : "border-amber-800 bg-amber-950/30 text-amber-300"
-              }`}
-            >
-              ★重要語だけ
-            </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setImportantOnly(!importantOnly)}
+                className={`rounded-2xl border px-3 py-3 text-xs font-black transition active:scale-95 ${
+                  importantOnly
+                    ? "border-amber-300 bg-amber-300 text-slate-950"
+                    : "border-amber-800 bg-amber-950/30 text-amber-300"
+                }`}
+              >
+                ★重要語
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFavoritesOnly(!favoritesOnly)}
+                className={`rounded-2xl border px-3 py-3 text-xs font-black transition active:scale-95 ${
+                  favoritesOnly
+                    ? "border-sky-300 bg-sky-300 text-slate-950"
+                    : "border-sky-800 bg-sky-950/30 text-sky-300"
+                }`}
+              >
+                ⭐お気に入り
+              </button>
+            </div>
           </div>
         </section>
 
@@ -1375,18 +1464,38 @@ export default function DictionaryPage() {
           <section className="mt-3 space-y-3">
             {filteredTerms.map((item) => {
               const open = openTerm === item.term;
+              const favorite = favorites.includes(item.term);
 
               return (
                 <article
                   key={`${item.term}-${item.english}`}
                   className="overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-slate-900 to-[#07150f] shadow-lg shadow-black/20"
                 >
+                  <div className="flex justify-end px-4 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => toggleFavorite(item.term)}
+                      aria-label={
+                        favorite
+                          ? `${item.term}をお気に入りから外す`
+                          : `${item.term}をお気に入りに追加`
+                      }
+                      className={`rounded-xl border px-3 py-2 text-sm font-black transition active:scale-95 ${
+                        favorite
+                          ? "border-amber-300 bg-amber-300 text-slate-950"
+                          : "border-white/10 bg-white/5 text-white/50"
+                      }`}
+                    >
+                      {favorite ? "★ 保存済み" : "☆ 保存"}
+                    </button>
+                  </div>
+
                   <button
                     type="button"
                     onClick={() =>
                       setOpenTerm(open ? null : item.term)
                     }
-                    className="w-full p-5 text-left"
+                    className="w-full px-5 pb-5 text-left"
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0">
@@ -1445,6 +1554,26 @@ export default function DictionaryPage() {
                         <p className="mt-2 text-sm leading-7 text-white/80">
                           {item.tip}
                         </p>
+                      </section>
+
+                      <section className="flex gap-3 rounded-2xl border border-emerald-800 bg-emerald-950/30 p-4">
+                        <div className="h-11 w-11 shrink-0 overflow-hidden rounded-xl">
+                          <Image
+                            src="/icon-512.png"
+                            alt=""
+                            width={44}
+                            height={44}
+                            className="h-full w-full object-cover"
+                          />
+                        </div>
+                        <div>
+                          <p className="text-xs font-black text-emerald-300">
+                            KB先生のひとこと
+                          </p>
+                          <p className="mt-2 text-sm leading-7 text-white/80">
+                            {getKbAdvice(item)}
+                          </p>
+                        </div>
                       </section>
                     </div>
                   )}
