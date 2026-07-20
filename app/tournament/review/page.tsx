@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -727,7 +728,7 @@ function ReviewPageContent() {
   }
 
   return (
-    <main className="min-h-screen bg-[#120b05] px-4 py-7 text-white">
+    <main className="min-h-screen bg-[#120b05] px-4 pb-[calc(env(safe-area-inset-bottom)+28px)] pt-[calc(env(safe-area-inset-top)+28px)] text-white">
       <div className="mx-auto max-w-md">
         <header className="mb-6">
           <Link
@@ -748,6 +749,28 @@ function ReviewPageContent() {
           <p className="mt-2 text-sm leading-7 text-white/60">
             大会状況・BBスタック・ICMを含めて、全アクションを短く整理します。
           </p>
+
+          <div className="mt-5 flex items-center gap-4 rounded-3xl border border-amber-700/70 bg-amber-950/30 p-4">
+            <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-2xl bg-white/5">
+              <Image
+                src="/icon-512.png"
+                alt="KBキャラクター"
+                fill
+                sizes="80px"
+                className="object-contain"
+                priority
+              />
+            </div>
+
+            <div>
+              <p className="text-xs font-black tracking-[0.16em] text-amber-300">
+                KB COACH
+              </p>
+              <p className="mt-1 text-sm font-bold leading-6 text-white/90">
+                BBスタックと大会状況も見ながら、一緒に振り返ろう！
+              </p>
+            </div>
+          </div>
         </header>
 
         {hands.length === 0 ? (
@@ -1153,7 +1176,7 @@ export default function ReviewPage() {
   return (
     <Suspense
       fallback={
-        <main className="min-h-screen bg-[#120b05] px-4 py-7 text-white">
+        <main className="min-h-screen bg-[#120b05] px-4 pb-[calc(env(safe-area-inset-bottom)+28px)] pt-[calc(env(safe-area-inset-top)+28px)] text-white">
           <div className="mx-auto max-w-md">
             <section className="rounded-3xl border border-emerald-800 bg-emerald-950/30 p-6 text-center">
               <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-white/20 border-t-emerald-300" />
