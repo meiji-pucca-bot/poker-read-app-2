@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { setPokerMode } from "@/lib/pokerMode";
 
 const HANDS_STORAGE_KEY = "poker-read-hands";
 const CURRENT_TABLE_KEY = "poker-read-current-table";
@@ -56,7 +57,11 @@ function safeParse<T>(value: string | null): T | null {
 }
 
 function readCashHands(): CashHand[] {
-  const saved = localStorage.getItem(HANDS_STORAGE_KEY);
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  const saved = window.localStorage.getItem(HANDS_STORAGE_KEY);
 
   if (!saved) {
     return [];
@@ -110,19 +115,14 @@ function MenuButton({
               {englishTitle}
             </p>
 
-            <h2 className="mt-1 text-2xl font-black">
-              {title}
-            </h2>
+            <h2 className="mt-1 text-2xl font-black">{title}</h2>
 
             <p className="mt-2 text-sm leading-6 text-white/65">
               {description}
             </p>
           </div>
 
-          <span
-            aria-hidden="true"
-            className="text-2xl text-white/40"
-          >
+          <span aria-hidden="true" className="text-2xl text-white/40">
             ›
           </span>
         </div>
@@ -139,8 +139,12 @@ function MenuLink({
   symbol,
   className,
 }: MenuLinkProps) {
+  function keepCashMode() {
+    setPokerMode("cash");
+  }
+
   return (
-    <Link href={href} className="block">
+    <Link href={href} className="block" onClick={keepCashMode}>
       <div
         className={`relative overflow-hidden rounded-3xl border p-5 shadow-xl transition active:scale-[0.98] ${className}`}
       >
@@ -161,19 +165,14 @@ function MenuLink({
               {englishTitle}
             </p>
 
-            <h2 className="mt-1 text-2xl font-black">
-              {title}
-            </h2>
+            <h2 className="mt-1 text-2xl font-black">{title}</h2>
 
             <p className="mt-2 text-sm leading-6 text-white/65">
               {description}
             </p>
           </div>
 
-          <span
-            aria-hidden="true"
-            className="text-2xl text-white/40"
-          >
+          <span aria-hidden="true" className="text-2xl text-white/40">
             ›
           </span>
         </div>
@@ -187,21 +186,21 @@ export default function CashHomePage() {
 
   const [handCount, setHandCount] = useState(0);
   const [winCount, setWinCount] = useState(0);
-  const [hasCurrentTable, setHasCurrentTable] =
-    useState(false);
+  const [hasCurrentTable, setHasCurrentTable] = useState(false);
 
   useEffect(() => {
+    // キャッシュ画面に入った時点で、必ずキャッシュモードへ切り替える。
+    setPokerMode("cash");
+
     const hands = readCashHands();
 
     setHandCount(hands.length);
     setWinCount(
-      hands.filter(
-        (hand) => hand.result?.type === "win",
-      ).length,
+      hands.filter((hand) => hand.result?.type === "win").length,
     );
 
     const currentTable = safeParse<SavedTable>(
-      localStorage.getItem(CURRENT_TABLE_KEY),
+      window.localStorage.getItem(CURRENT_TABLE_KEY),
     );
 
     setHasCurrentTable(
@@ -216,15 +215,20 @@ export default function CashHomePage() {
   }, []);
 
   function startNewCashHand() {
-    localStorage.removeItem(TABLE_DRAFT_KEY);
-    localStorage.removeItem(CURRENT_TABLE_KEY);
+    // 画面遷移の直前にも保存し、以前のトーナメント設定を確実に上書きする。
+    setPokerMode("cash");
+
+    window.localStorage.removeItem(TABLE_DRAFT_KEY);
+    window.localStorage.removeItem(CURRENT_TABLE_KEY);
 
     router.push("/new-table");
   }
 
   function startWithSameConditions() {
+    setPokerMode("cash");
+
     const currentTable = safeParse<SavedTable>(
-      localStorage.getItem(CURRENT_TABLE_KEY),
+      window.localStorage.getItem(CURRENT_TABLE_KEY),
     );
 
     if (!currentTable) {
@@ -238,11 +242,8 @@ export default function CashHomePage() {
     <main className="relative min-h-screen overflow-hidden bg-[#03140d] px-4 pb-[max(32px,env(safe-area-inset-bottom))] pt-[max(56px,calc(env(safe-area-inset-top)+20px))] text-white">
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute left-1/2 top-[-160px] h-[360px] w-[360px] -translate-x-1/2 rounded-full bg-emerald-400/20 blur-3xl" />
-
         <div className="absolute -left-28 top-1/3 h-64 w-64 rounded-full bg-green-500/10 blur-3xl" />
-
         <div className="absolute -right-24 bottom-24 h-64 w-64 rounded-full bg-cyan-500/10 blur-3xl" />
-
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(34,197,94,0.08),transparent_38%)]" />
       </div>
 
@@ -283,20 +284,12 @@ export default function CashHomePage() {
 
           <div className="mt-4 grid grid-cols-2 gap-3">
             <div className="rounded-2xl border border-white/5 bg-black/25 p-4">
-              <p className="text-xs text-white/40">
-                保存ハンド
-              </p>
-
-              <p className="mt-1 text-3xl font-black">
-                {handCount}
-              </p>
+              <p className="text-xs text-white/40">保存ハンド</p>
+              <p className="mt-1 text-3xl font-black">{handCount}</p>
             </div>
 
             <div className="rounded-2xl border border-white/5 bg-black/25 p-4">
-              <p className="text-xs text-white/40">
-                勝ち
-              </p>
-
+              <p className="text-xs text-white/40">勝ち</p>
               <p className="mt-1 text-3xl font-black text-emerald-300">
                 {winCount}
               </p>
