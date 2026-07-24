@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { setPokerMode } from "@/lib/pokerMode";
 
 type TableDraft = {
   venue: string;
@@ -80,6 +81,9 @@ export default function NewTablePage() {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
+    // この画面はキャッシュゲーム専用。以前のトーナメント設定を確実に上書きする。
+    setPokerMode("cash");
+
     const savedDraft = localStorage.getItem(draftStorageKey);
 
     if (savedDraft) {
@@ -211,6 +215,8 @@ export default function NewTablePage() {
 
     localStorage.removeItem(draftStorageKey);
 
+    // 次画面へ移動する直前にもキャッシュモードを固定する。
+    setPokerMode("cash");
     router.push("/hero-hand");
   }
 
@@ -219,7 +225,7 @@ export default function NewTablePage() {
       <div className="mx-auto max-w-md">
         <header className="mb-6">
           <Link
-            href="/new-hand"
+            href="/cash"
             className="relative z-20 mb-5 inline-flex min-h-11 items-center rounded-xl px-2 text-sm font-semibold text-slate-400 active:bg-white/10"
           >
             ← 前の画面へ戻る

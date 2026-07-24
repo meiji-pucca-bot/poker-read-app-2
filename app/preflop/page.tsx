@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { getModeStorageKey, getPokerMode } from "@/lib/pokerMode";
+import { getModeStorageKey, getPokerMode, setPokerMode } from "@/lib/pokerMode";
 
 const tablePositions = [
   "UTG",
@@ -267,7 +267,31 @@ export default function PreflopPage() {
   const [ante, setAnte] = useState("");
 
   useEffect(() => {
-    const currentMode = getPokerMode();
+    const cashTable = localStorage.getItem("poker-read-current-table");
+    const tournamentTable = localStorage.getItem(
+      "poker-read-tournament-current",
+    );
+
+    // 保存モードと実際の入力データが食い違った場合は、存在するデータを優先する。
+    // これにより古い tournament 設定が残っていても、キャッシュ入力を正しく復元できる。
+    let currentMode = getPokerMode();
+
+    if (
+      currentMode === "tournament" &&
+      !tournamentTable &&
+      cashTable
+    ) {
+      currentMode = "cash";
+      setPokerMode("cash");
+    } else if (
+      currentMode === "cash" &&
+      !cashTable &&
+      tournamentTable
+    ) {
+      currentMode = "tournament";
+      setPokerMode("tournament");
+    }
+
     setMode(currentMode);
 
     const savedPositions = localStorage.getItem(
@@ -290,12 +314,8 @@ export default function PreflopPage() {
 
     const savedTable =
       currentMode === "tournament"
-        ? localStorage.getItem(
-            "poker-read-tournament-current",
-          )
-        : localStorage.getItem(
-            "poker-read-current-table",
-          );
+        ? tournamentTable
+        : cashTable;
 
     if (savedTable) {
       try {
