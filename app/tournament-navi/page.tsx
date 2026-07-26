@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import {
-  deleteTournament,
+  finishTournament,
   loadTournament,
+  loadTournamentHistory,
   saveTournament,
+  type FinishedTournament,
   type SavedTournament,
   type TournamentForm,
 } from "@/lib/tournament-storage";
@@ -79,23 +81,22 @@ export default function TournamentNaviPage() {
 
   const [isStorageLoaded, setIsStorageLoaded] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [history, setHistory] = useState<FinishedTournament[]>([]);
 
   useEffect(() => {
     const savedData = loadTournament();
 
-
     if (savedData) {
-    setForm({
-      ...initialForm,
-      ...savedData.form,
-    });
+      setForm({
+        ...initialForm,
+        ...savedData.form,
+      });
+      setIsStarted(true);
+      setShowResult(true);
+      setLastSavedAt(savedData.savedAt);
+    }
 
-    setIsStarted(true);
-    setShowResult(true);
-    setLastSavedAt(savedData.savedAt);
-  }
-
-
+    setHistory(loadTournamentHistory());
     setIsStorageLoaded(true);
   }, []);
 
@@ -305,29 +306,30 @@ export default function TournamentNaviPage() {
   }
 
  function handleEnd() {
-  const confirmed = window.confirm(
-    "この大会を終了しますか？\n保存されている進行データも削除されます。",
-  );
-
-  if (!confirmed) {
-    return;
-  }
-
-  const deleted = deleteTournament();
-
-  if (!deleted) {
-    window.alert(
-      "保存データを削除できませんでした。ブラウザの設定を確認してください。",
+    const confirmed = window.confirm(
+      "この大会を終了して履歴に保存しますか？",
     );
-    return;
-  }
 
-  setIsStarted(false);
-  setShowResult(false);
-  setLastSavedAt(null);
-  setForm(initialForm);
-  setInputMethod("manual");
-}
+    if (!confirmed) {
+      return;
+    }
+
+    const updatedHistory = finishTournament(form);
+
+    if (!updatedHistory) {
+      window.alert(
+        "大会履歴を保存できませんでした。ブラウザの設定を確認してください。",
+      );
+      return;
+    }
+
+    setHistory(updatedHistory);
+    setIsStarted(false);
+    setShowResult(false);
+    setLastSavedAt(null);
+    setForm(initialForm);
+    setInputMethod("manual");
+  }
     if (!isStorageLoaded) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#07150f] px-4 text-white">
@@ -724,6 +726,89 @@ export default function TournamentNaviPage() {
           </button>
         )}
 
+
+        {/* 大会履歴 */}
+        <section className="mt-6 rounded-3xl border border-white/10 bg-white/[0.04] p-5 shadow-2xl">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-black tracking-[0.18em] text-violet-300">
+                TOURNAMENT HISTORY
+              </p>
+              <h2 className="mt-1 text-xl font-black">
+                📚 最近の大会
+              </h2>
+            </div>
+
+            <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-black text-white/50">
+              {history.length}件
+            </span>
+          </div>
+
+          {history.length === 0 ? (
+            <p className="mt-4 rounded-2xl border border-dashed border-white/10 bg-black/10 px-4 py-5 text-center text-sm font-medium text-white/40">
+              終了した大会は、ここに保存されます。
+            </p>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {history.slice(0, 5).map((tournament) => (
+                <article
+                  key={tournament.id}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate font-black text-white">
+                        {tournament.form.tournamentName.trim() ||
+                          "名称未入力の大会"}
+                      </h3>
+
+                      <p className="mt-1 text-xs font-bold text-white/40">
+                        {new Intl.DateTimeFormat("ja-JP", {
+                          year: "numeric",
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        }).format(
+                          new Date(tournament.finishedAt),
+                        )}
+                      </p>
+                    </div>
+
+                    <span className="shrink-0 rounded-full border border-slate-400/20 bg-slate-400/10 px-3 py-1 text-xs font-black text-slate-300">
+                      終了
+                    </span>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    <HistoryValue
+                      label="終了時"
+                      value={
+                        tournament.finalHeroBb > 0
+                          ? `${formatNumber(
+                              tournament.finalHeroBb,
+                            )} BB`
+                          : "未計算"
+                      }
+                    />
+                    <HistoryValue
+                      label="残り人数"
+                      value={
+                        tournament.form.remainingPlayers ||
+                        "未入力"
+                      }
+                    />
+                    <HistoryValue
+                      label="レベル"
+                      value={tournament.form.level || "未入力"}
+                    />
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+
         <p className="mt-5 text-center text-xs leading-5 text-white/30">
           診断内容は大会状況を整理するための参考情報です。
           <br />
@@ -731,6 +816,25 @@ export default function TournamentNaviPage() {
         </p>
       </div>
     </main>
+  );
+}
+
+function HistoryValue({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-xl border border-white/5 bg-white/[0.03] p-3">
+      <p className="text-[10px] font-bold text-white/35">
+        {label}
+      </p>
+      <p className="mt-1 truncate text-sm font-black text-white/80">
+        {value}
+      </p>
+    </div>
   );
 }
 
@@ -750,3 +854,4 @@ function ResultCard({
     </div>
   );
 }
+
