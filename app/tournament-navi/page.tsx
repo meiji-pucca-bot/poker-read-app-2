@@ -3,19 +3,13 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-type TournamentForm = {
-  tournamentName: string;
-  buyIn: string;
-  startingPlayers: string;
-  remainingPlayers: string;
-  itmPlayers: string;
-  heroStack: string;
-  averageStack: string;
-  smallBlind: string;
-  bigBlind: string;
-  ante: string;
-  level: string;
-};
+import {
+  deleteTournament,
+  loadTournament,
+  saveTournament,
+  type SavedTournament,
+  type TournamentForm,
+} from "@/lib/tournament-storage";
 
 const initialForm: TournamentForm = {
   tournamentName: "",
@@ -29,14 +23,6 @@ const initialForm: TournamentForm = {
   bigBlind: "",
   ante: "",
   level: "",
-};
-const TOURNAMENT_STORAGE_KEY = "poker-read-active-tournament";
-
-type SavedTournament = {
-  version: 1;
-  form: TournamentForm;
-  isStarted: boolean;
-  savedAt: string;
 };
 
 function toNumber(value: string): number {
@@ -94,85 +80,50 @@ export default function TournamentNaviPage() {
   const [isStorageLoaded, setIsStorageLoaded] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
 
-    useEffect(() => {
-    try {
-      const savedText = window.localStorage.getItem(
-        TOURNAMENT_STORAGE_KEY,
-      );
+  useEffect(() => {
+    const savedData = loadTournament();
 
-      if (!savedText) {
-        setIsStorageLoaded(true);
-        return;
-      }
 
-      const savedData = JSON.parse(
-        savedText,
-      ) as Partial<SavedTournament>;
+    if (savedData) {
+    setForm({
+      ...initialForm,
+      ...savedData.form,
+    });
 
-      if (
-        savedData.version !== 1 ||
-        !savedData.form ||
-        savedData.isStarted !== true
-      ) {
-        window.localStorage.removeItem(
-          TOURNAMENT_STORAGE_KEY,
-        );
+    setIsStarted(true);
+    setShowResult(true);
+    setLastSavedAt(savedData.savedAt);
+  }
 
-        setIsStorageLoaded(true);
-        return;
-      }
 
-      setForm({
-        ...initialForm,
-        ...savedData.form,
-      });
-
-      setIsStarted(true);
-      setShowResult(true);
-      setLastSavedAt(savedData.savedAt ?? null);
-    } catch (error) {
-      console.error(
-        "大会データの読み込みに失敗しました。",
-        error,
-      );
-
-      window.localStorage.removeItem(
-        TOURNAMENT_STORAGE_KEY,
-      );
-    } finally {
-      setIsStorageLoaded(true);
-    }
+    setIsStorageLoaded(true);
   }, []);
 
-    useEffect(() => {
+
+  useEffect(() => {
     if (!isStorageLoaded || !isStarted) {
-      return;
-    }
+    return;
+  }
 
-    try {
-      const savedAt = new Date().toISOString();
 
-      const data: SavedTournament = {
-        version: 1,
-        form,
-        isStarted: true,
-        savedAt,
-      };
+    const savedAt = new Date().toISOString();
 
-      window.localStorage.setItem(
-        TOURNAMENT_STORAGE_KEY,
-        JSON.stringify(data),
-      );
 
-      setLastSavedAt(savedAt);
-    } catch (error) {
-      console.error(
-        "大会データの保存に失敗しました。",
-        error,
-      );
-    }
+    const data: SavedTournament = {
+    version: 1,
+    form,
+    isStarted: true,
+    savedAt,
+  };
+
+
+    const saved = saveTournament(data);
+
+
+    if (saved) {
+    setLastSavedAt(savedAt);
+  }
   }, [form, isStarted, isStorageLoaded]);
-
   function updateField(
     field: keyof TournamentForm,
     value: string,
@@ -305,46 +256,39 @@ export default function TournamentNaviPage() {
     };
   }, [form]);
 
-    function handleStart() {
-    const bigBlind = toNumber(form.bigBlind);
-    const heroStack = toNumber(form.heroStack);
+  function handleStart() {
+  const bigBlind = toNumber(form.bigBlind);
+  const heroStack = toNumber(form.heroStack);
 
-    if (bigBlind <= 0 || heroStack <= 0) {
-      window.alert(
-        "「自分のスタック」と「BB」を入力してください。",
-      );
-      return;
-    }
-
-    const savedAt = new Date().toISOString();
-
-    const data: SavedTournament = {
-      version: 1,
-      form,
-      isStarted: true,
-      savedAt,
-    };
-
-    try {
-      window.localStorage.setItem(
-        TOURNAMENT_STORAGE_KEY,
-        JSON.stringify(data),
-      );
-
-      setLastSavedAt(savedAt);
-      setIsStarted(true);
-      setShowResult(true);
-    } catch (error) {
-      console.error(
-        "大会データの保存に失敗しました。",
-        error,
-      );
-
-      window.alert(
-        "大会データを保存できませんでした。ブラウザの設定を確認してください。",
-      );
-    }
+  if (bigBlind <= 0 || heroStack <= 0) {
+    window.alert(
+      "「自分のスタック」と「BB」を入力してください。",
+    );
+    return;
   }
+
+  const savedAt = new Date().toISOString();
+
+  const data: SavedTournament = {
+    version: 1,
+    form,
+    isStarted: true,
+    savedAt,
+  };
+
+  const saved = saveTournament(data);
+
+  if (!saved) {
+    window.alert(
+      "大会データを保存できませんでした。ブラウザの設定を確認してください。",
+    );
+    return;
+  }
+
+  setLastSavedAt(savedAt);
+  setIsStarted(true);
+  setShowResult(true);
+}
 
   function handleDiagnosis() {
     const bigBlind = toNumber(form.bigBlind);
@@ -360,33 +304,30 @@ export default function TournamentNaviPage() {
     setShowResult(true);
   }
 
-    function handleEnd() {
-    const confirmed = window.confirm(
-      "この大会を終了しますか？\n保存されている進行データも削除されます。",
-    );
+ function handleEnd() {
+  const confirmed = window.confirm(
+    "この大会を終了しますか？\n保存されている進行データも削除されます。",
+  );
 
-    if (!confirmed) {
-      return;
-    }
-
-    try {
-      window.localStorage.removeItem(
-        TOURNAMENT_STORAGE_KEY,
-      );
-    } catch (error) {
-      console.error(
-        "保存データの削除に失敗しました。",
-        error,
-      );
-    }
-
-    setIsStarted(false);
-    setShowResult(false);
-    setLastSavedAt(null);
-    setForm(initialForm);
-    setInputMethod("manual");
+  if (!confirmed) {
+    return;
   }
 
+  const deleted = deleteTournament();
+
+  if (!deleted) {
+    window.alert(
+      "保存データを削除できませんでした。ブラウザの設定を確認してください。",
+    );
+    return;
+  }
+
+  setIsStarted(false);
+  setShowResult(false);
+  setLastSavedAt(null);
+  setForm(initialForm);
+  setInputMethod("manual");
+}
     if (!isStorageLoaded) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#07150f] px-4 text-white">
