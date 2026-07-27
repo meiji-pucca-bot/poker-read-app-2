@@ -204,6 +204,14 @@ export default function Home() {
               className="border-violet-700/70 bg-gradient-to-br from-violet-950 to-slate-950"
             />
 
+            <HomeButton
+              href="/calculator"
+              icon="🧮"
+              label="Poker Calculator"
+              description="ポットオッズとエクイティを計算"
+              className="border-emerald-700/70 bg-gradient-to-br from-emerald-950 to-slate-950"
+            />
+
           </div>
         </section>
 

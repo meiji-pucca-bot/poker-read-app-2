@@ -1,0 +1,16 @@
+Poker Read - Poker Calculator 完全版
+
+追加機能
+- /calculator
+- ポットオッズ計算
+- 必要エクイティ表示
+- 推定エクイティとの比較
+- ドロー完成率
+- Hero vs 指定ハンド／ランダムハンドのモンテカルロ計算
+- カード重複防止
+- HOME導線追加
+
+確認手順
+1. npm install
+2. npm run build
+3. npm run dev
