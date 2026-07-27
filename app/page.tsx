@@ -195,6 +195,15 @@ export default function Home() {
               description="大会履歴から傾向と次回の課題を分析"
               className="border-fuchsia-700/70 bg-gradient-to-br from-fuchsia-950 to-slate-950"
             />
+
+            <HomeButton
+              href="/ocr"
+              icon="📷"
+              label="大会スクショ読込"
+              description="画像から大会情報を自動入力"
+              className="border-violet-700/70 bg-gradient-to-br from-violet-950 to-slate-950"
+            />
+
           </div>
         </section>
 
@@ -285,11 +294,6 @@ export default function Home() {
               icon="🤖"
               title="AI分析"
               description="プレイ傾向と次の改善点を診断"
-            />
-            <ComingSoonCard
-              icon="📷"
-              title="OCR読込"
-              description="スクリーンショットから大会情報を入力"
             />
             <ComingSoonCard
               icon="🌐"

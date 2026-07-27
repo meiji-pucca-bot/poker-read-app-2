@@ -1,0 +1,21 @@
+Poker Read - OpenAI Vision OCR 完全版
+
+追加・更新ファイル:
+- app/ocr/page.tsx
+- app/api/tournament-ocr/route.ts
+- lib/tournament-ocr.ts
+- app/page.tsx
+- app/tournament-navi/page.tsx
+
+環境変数 (.env.local):
+OPENAI_API_KEY=your_key_here
+
+任意:
+OPENAI_OCR_MODEL=gpt-5-mini
+
+画像形式:
+PNG / JPEG / WebP、最大8MB
+
+注意:
+このZIPはアップロードされたプロジェクト一式を基に生成しています。
+node_modules と .next は含まれていません。

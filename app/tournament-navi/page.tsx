@@ -13,6 +13,12 @@ import {
   type TournamentForm,
 } from "@/lib/tournament-storage";
 
+import {
+  clearOcrDraft,
+  loadOcrDraft,
+} from "@/lib/tournament-ocr";
+
+
 const initialForm: TournamentForm = {
   tournamentName: "",
   buyIn: "",
@@ -84,9 +90,20 @@ export default function TournamentNaviPage() {
   const [history, setHistory] = useState<FinishedTournament[]>([]);
 
   useEffect(() => {
+    const ocrDraft = loadOcrDraft();
     const savedData = loadTournament();
 
-    if (savedData) {
+    if (ocrDraft) {
+      setForm({
+        ...initialForm,
+        ...ocrDraft,
+      });
+      setInputMethod("photo");
+      setIsStarted(false);
+      setShowResult(false);
+      setLastSavedAt(null);
+      clearOcrDraft();
+    } else if (savedData) {
       setForm({
         ...initialForm,
         ...savedData.form,
@@ -459,12 +476,19 @@ export default function TournamentNaviPage() {
           {inputMethod === "photo" && (
             <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-400/5 p-4">
               <p className="text-sm font-bold text-violet-200">
-                写真読込・OCRは次の段階で接続します。
+                OCR結果をフォームへ反映できます。
               </p>
 
               <p className="mt-2 text-xs leading-5 text-white/45">
-                現在は下のフォームへ手動で入力してください。
+                新しい画像を読み込む場合はOCR画面を開いてください。
               </p>
+
+              <Link
+                href="/ocr"
+                className="mt-3 inline-flex rounded-xl border border-violet-300/20 bg-violet-300/10 px-4 py-2 text-xs font-black text-violet-200"
+              >
+                📷 OCR画面を開く
+              </Link>
             </div>
           )}
 
