@@ -187,6 +187,14 @@ export default function Home() {
               description="大会履歴・統計を見る"
               className="border-cyan-700/70 bg-gradient-to-br from-cyan-950 to-slate-950"
             />
+
+            <HomeButton
+              href="/tournament-ai-review"
+              icon="🤖"
+              label="AI大会レビュー"
+              description="大会履歴から傾向と次回の課題を分析"
+              className="border-fuchsia-700/70 bg-gradient-to-br from-fuchsia-950 to-slate-950"
+            />
           </div>
         </section>
 
