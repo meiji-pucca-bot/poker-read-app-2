@@ -10,6 +10,16 @@ export type TournamentStats = {
   averageStartingPlayers: number;
   averageBuyIn: number;
   totalBuyIn: number;
+  bestFinalHeroBb: number;
+  latestFinalHeroBb: number;
+};
+
+export type TournamentChartPoint = {
+  id: string;
+  label: string;
+  date: string;
+  value: number;
+  tournamentName: string;
 };
 
 function toNumber(value: string): number {
@@ -38,25 +48,31 @@ function average(values: number[]): number {
   );
 }
 
+export function isEstimatedItm(
+  tournament: FinishedTournament,
+): boolean {
+  const remainingPlayers = toNumber(
+    tournament.form.remainingPlayers,
+  );
+  const itmPlayers = toNumber(
+    tournament.form.itmPlayers,
+  );
+
+  return (
+    remainingPlayers > 0 &&
+    itmPlayers > 0 &&
+    remainingPlayers <= itmPlayers
+  );
+}
+
 export function calculateTournamentStats(
   history: FinishedTournament[],
 ): TournamentStats {
   const totalTournaments = history.length;
 
-  const estimatedItmCount = history.filter((tournament) => {
-    const remainingPlayers = toNumber(
-      tournament.form.remainingPlayers,
-    );
-    const itmPlayers = toNumber(
-      tournament.form.itmPlayers,
-    );
-
-    return (
-      remainingPlayers > 0 &&
-      itmPlayers > 0 &&
-      remainingPlayers <= itmPlayers
-    );
-  }).length;
+  const estimatedItmCount = history.filter(
+    isEstimatedItm,
+  ).length;
 
   const buyIns = history
     .map((tournament) =>
@@ -69,6 +85,12 @@ export function calculateTournamentStats(
     0,
   );
 
+  const finalHeroBbs = history
+    .map((tournament) => tournament.finalHeroBb)
+    .filter(
+      (value) => Number.isFinite(value) && value >= 0,
+    );
+
   return {
     totalTournaments,
     estimatedItmCount,
@@ -76,11 +98,7 @@ export function calculateTournamentStats(
       totalTournaments > 0
         ? (estimatedItmCount / totalTournaments) * 100
         : 0,
-    averageFinalHeroBb: average(
-      history.map(
-        (tournament) => tournament.finalHeroBb,
-      ),
-    ),
+    averageFinalHeroBb: average(finalHeroBbs),
     averageStartingPlayers: average(
       history.map((tournament) =>
         toNumber(tournament.form.startingPlayers),
@@ -91,7 +109,36 @@ export function calculateTournamentStats(
         ? totalBuyIn / buyIns.length
         : 0,
     totalBuyIn,
+    bestFinalHeroBb:
+      finalHeroBbs.length > 0
+        ? Math.max(...finalHeroBbs)
+        : 0,
+    latestFinalHeroBb:
+      history.length > 0
+        ? Math.max(0, history[0].finalHeroBb)
+        : 0,
   };
+}
+
+export function createHeroBbChartData(
+  history: FinishedTournament[],
+  limit = 12,
+): TournamentChartPoint[] {
+  return history
+    .slice(0, limit)
+    .reverse()
+    .map((tournament, index) => ({
+      id: tournament.id,
+      label: `${index + 1}`,
+      date: new Intl.DateTimeFormat("ja-JP", {
+        month: "numeric",
+        day: "numeric",
+      }).format(new Date(tournament.finishedAt)),
+      value: Math.max(0, tournament.finalHeroBb),
+      tournamentName:
+        tournament.form.tournamentName.trim() ||
+        "名称未入力の大会",
+    }));
 }
 
 export function formatStatNumber(
