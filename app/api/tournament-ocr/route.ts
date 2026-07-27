@@ -174,10 +174,15 @@ export async function POST(request: Request) {
         imageDataUrl?: unknown;
       };
 
+    const imageDataUrl =
+      typeof body.imageDataUrl === "string"
+        ? body.imageDataUrl
+        : "";
+
     if (
-      typeof body.imageDataUrl !== "string" ||
+      imageDataUrl === "" ||
       !ALLOWED_PREFIXES.some((prefix) =>
-        body.imageDataUrl!.startsWith(prefix),
+        imageDataUrl.startsWith(prefix),
       )
     ) {
       return NextResponse.json(
@@ -190,7 +195,7 @@ export async function POST(request: Request) {
     }
 
     if (
-      body.imageDataUrl.length >
+      imageDataUrl.length >
       MAX_DATA_URL_LENGTH
     ) {
       return NextResponse.json(
@@ -259,7 +264,7 @@ JSON形式:
               {
                 type: "input_image",
                 image_url:
-                  body.imageDataUrl,
+                  imageDataUrl,
                 detail: "high",
               },
             ],

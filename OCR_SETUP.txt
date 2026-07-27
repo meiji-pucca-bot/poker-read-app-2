@@ -19,3 +19,7 @@ PNG / JPEG / WebP、最大8MB
 注意:
 このZIPはアップロードされたプロジェクト一式を基に生成しています。
 node_modules と .next は含まれていません。
+
+v2修正:
+- Next.js 16 / TypeScriptでのimageDataUrl型エラーを修正
+- unknown値をstring型変数へ安全に変換してから検証
