@@ -1,0 +1,2 @@
+NOT VERIFIED
+この環境ではnpm install / npm run buildの完了確認ができませんでした。
