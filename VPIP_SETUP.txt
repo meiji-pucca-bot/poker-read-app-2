@@ -1,0 +1,20 @@
+Poker Read - VPIP / PFR Tracker
+
+追加ファイル:
+- app/vpip/page.tsx
+- lib/vpip-tracker.ts
+
+更新:
+- app/page.tsx（HOME導線）
+
+操作:
+フォールド = ハンド数 +1
+コール参加 = ハンド数 +1 / VPIP参加数 +1
+レイズ参加 = ハンド数 +1 / VPIP参加数 +1 / PFR数 +1
+
+機能:
+- VPIP自動計算
+- PFR自動計算
+- 1つ戻す
+- リセット確認
+- localStorage自動保存・復元

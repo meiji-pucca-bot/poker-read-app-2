@@ -212,6 +212,14 @@ export default function Home() {
               className="border-emerald-700/70 bg-gradient-to-br from-emerald-950 to-slate-950"
             />
 
+            <HomeButton
+              href="/vpip"
+              icon="📊"
+              label="VPIP / PFR Tracker"
+              description="毎ハンド1タップで参加率を記録"
+              className="border-amber-700/70 bg-gradient-to-br from-amber-950 to-slate-950"
+            />
+
           </div>
         </section>
 
