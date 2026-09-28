@@ -1,247 +1,68 @@
 "use client";
-
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import {useEffect,useMemo,useState} from "react";
+import {stats,totals,loadActions,saveActions,clearActions,loadHistory,saveHistory,type VpipAction,type SavedSession} from "@/lib/vpip-tracker";
 
-import {
-  calculateVpipStats,
-  clearVpipSession,
-  loadVpipSession,
-  saveVpipSession,
-  type VpipAction,
-} from "@/lib/vpip-tracker";
+const today=()=>{const d=new Date();return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10)};
+const parse=(v:string)=>{if(!v.trim())return null;const n=Number(v.replace(/,/g,""));return Number.isFinite(n)?n:null};
+const money=(n:number)=>`${n>0?"+":""}${new Intl.NumberFormat("ja-JP").format(n)}`;
 
-function ActionButton({
-  label,
-  description,
-  onClick,
-  className,
-}: {
-  label: string;
-  description: string;
-  onClick: () => void;
-  className: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`w-full rounded-3xl border p-5 text-left shadow-xl transition active:scale-[0.98] ${className}`}
-    >
-      <span className="block text-xl font-black">{label}</span>
-      <span className="mt-1 block text-xs font-bold text-white/50">
-        {description}
-      </span>
-    </button>
-  );
-}
+export default function VpipPage(){
+ const [actions,setActions]=useState<VpipAction[]>([]);
+ const [history,setHistory]=useState<SavedSession[]>([]);
+ const [date,setDate]=useState(today());
+ const [start,setStart]=useState(""),[end,setEnd]=useState(""),[direct,setDirect]=useState("");
+ const [ready,setReady]=useState(false),[error,setError]=useState("");
+ useEffect(()=>{setActions(loadActions());setHistory(loadHistory());setReady(true)},[]);
+ const s=useMemo(()=>stats(actions),[actions]),t=useMemo(()=>totals(history),[history]);
+ const profit=useMemo(()=>{const d=parse(direct);if(d!==null)return d;const a=parse(start),b=parse(end);return a!==null&&b!==null?b-a:null},[start,end,direct]);
+ const add=(a:VpipAction)=>{const n=[...actions,a];if(saveActions(n)){setActions(n);setError("")}else setError("保存できませんでした。")};
+ const undo=()=>{const n=actions.slice(0,-1);if(saveActions(n))setActions(n)};
+ function save(){
+  if(!s.hands)return setError("ハンドを1件以上記録してください。");
+  if(profit===null)return setError("開始額と終了額、または収支を入力してください。");
+  if(!window.confirm(`${date} のセッションを保存しますか？\n${s.hands} hands\nVPIP ${s.vpip.toFixed(1)} / PFR ${s.pfr.toFixed(1)}\n収支 ${money(profit)}`))return;
+  const item:SavedSession={id:crypto.randomUUID?.()??String(Date.now()),date,hands:s.hands,folds:s.folds,calls:s.calls,raises:s.raises,vpipHands:s.vpipHands,vpip:s.vpip,pfr:s.pfr,startAmount:parse(start),endAmount:parse(end),profit,savedAt:new Date().toISOString()};
+  const n=[item,...history];if(!saveHistory(n))return setError("保存できませんでした。");
+  clearActions();setHistory(n);setActions([]);setDate(today());setStart("");setEnd("");setDirect("");setError("");
+ }
+ function remove(id:string){if(!confirm("この履歴を削除しますか？"))return;const n=history.filter(x=>x.id!==id);if(saveHistory(n))setHistory(n)}
+ if(!ready)return <main className="min-h-screen bg-[#07150f] p-8 text-white">読み込み中...</main>;
+ return <main className="min-h-screen bg-[#07150f] px-4 pb-16 pt-6 text-white"><div className="mx-auto max-w-md">
+ <Link href="/" className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-black">‹ HOME</Link>
+ <header className="mt-7"><p className="text-xs font-black tracking-widest text-emerald-300">SESSION TRACKER</p><h1 className="mt-2 text-3xl font-black">📊 VPIP / PFR</h1><p className="mt-2 text-sm text-white/45">毎ハンド1回タップ。終了時に日付と収支を保存します。</p></header>
+ <section className="mt-6 grid grid-cols-2 gap-3">
+ {([["ハンド数",s.hands,""],["参加数",s.vpipHands,""],["VPIP",s.hands?s.vpip.toFixed(1)+"%":"—","text-emerald-300"],["PFR",s.hands?s.pfr.toFixed(1)+"%":"—","text-amber-300"]] as const).map(([l,v,c])=><div key={l} className="rounded-3xl border border-white/10 bg-white/5 p-5"><p className="text-xs text-white/40">{l}</p><p className={`mt-2 text-4xl font-black ${c}`}>{v}</p></div>)}
+ </section>
+ <section className="mt-6 space-y-3">
+ <button onClick={()=>add("fold")} className="w-full rounded-3xl bg-slate-900 p-5 text-left"><b className="text-xl">⬜ フォールド</b><span className="block text-xs text-white/45">ハンド数 +1</span></button>
+ <button onClick={()=>add("call")} className="w-full rounded-3xl bg-sky-950 p-5 text-left"><b className="text-xl">🔵 コール参加</b><span className="block text-xs text-white/45">ハンド数 +1 / VPIP +1</span></button>
+ <button onClick={()=>add("raise")} className="w-full rounded-3xl bg-emerald-950 p-5 text-left"><b className="text-xl">🟢 レイズ参加</b><span className="block text-xs text-white/45">ハンド数 +1 / VPIP +1 / PFR +1</span></button>
+ <button onClick={undo} disabled={!actions.length} className="w-full rounded-2xl border border-white/10 p-4 font-black disabled:opacity-30">↩ 1つ戻す</button>
+ </section>
 
-export default function VpipPage() {
-  const [actions, setActions] = useState<VpipAction[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const [saveError, setSaveError] = useState("");
-
-  useEffect(() => {
-    setActions(loadVpipSession().actions);
-    setLoaded(true);
-  }, []);
-
-  const stats = useMemo(() => calculateVpipStats(actions), [actions]);
-
-  function addAction(action: VpipAction) {
-    const next = [...actions, action];
-
-    if (!saveVpipSession(next)) {
-      setSaveError("記録を保存できませんでした。");
-      return;
-    }
-
-    setActions(next);
-    setSaveError("");
-  }
-
-  function undo() {
-    if (actions.length === 0) return;
-
-    const next = actions.slice(0, -1);
-
-    if (!saveVpipSession(next)) {
-      setSaveError("記録を保存できませんでした。");
-      return;
-    }
-
-    setActions(next);
-    setSaveError("");
-  }
-
-  function reset() {
-    if (actions.length === 0) return;
-
-    const confirmed = window.confirm(
-      "VPIP / PFRの記録をすべてリセットしますか？",
-    );
-
-    if (!confirmed) return;
-
-    if (!clearVpipSession()) {
-      setSaveError("記録を削除できませんでした。");
-      return;
-    }
-
-    setActions([]);
-    setSaveError("");
-  }
-
-  const lastAction = actions.at(-1);
-
-  if (!loaded) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-[#07150f] text-white">
-        <p className="font-black">VPIPデータを読み込んでいます</p>
-      </main>
-    );
-  }
-
-  return (
-    <main className="relative min-h-screen overflow-hidden bg-[#07150f] px-4 pb-[max(40px,env(safe-area-inset-bottom))] pt-[max(24px,calc(env(safe-area-inset-top)+12px))] text-white">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -right-28 top-0 h-72 w-72 rounded-full bg-emerald-500/15 blur-3xl" />
-        <div className="absolute -left-28 top-1/2 h-72 w-72 rounded-full bg-cyan-500/10 blur-3xl" />
-      </div>
-
-      <div className="relative mx-auto max-w-md">
-        <div className="flex items-center justify-between">
-          <Link
-            href="/"
-            className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-black text-white/60"
-          >
-            ‹ HOME
-          </Link>
-          <span className="text-xs font-black tracking-[0.18em] text-emerald-300/70">
-            LIVE TRACKER
-          </span>
-        </div>
-
-        <header className="mt-7">
-          <h1 className="text-3xl font-black">📊 VPIP / PFR Tracker</h1>
-          <p className="mt-3 text-sm font-medium leading-6 text-white/45">
-            毎ハンド終了時に、該当するボタンを1回押すだけです。
-          </p>
-        </header>
-
-        <section className="mt-6 grid grid-cols-2 gap-3">
-          <div className="rounded-3xl border border-white/10 bg-white/[0.05] p-5">
-            <p className="text-xs font-black text-white/40">ハンド数</p>
-            <p className="mt-2 text-4xl font-black">{stats.hands}</p>
-          </div>
-          <div className="rounded-3xl border border-white/10 bg-white/[0.05] p-5">
-            <p className="text-xs font-black text-white/40">参加数</p>
-            <p className="mt-2 text-4xl font-black">{stats.vpipHands}</p>
-          </div>
-          <div className="rounded-3xl border border-emerald-400/20 bg-emerald-400/10 p-5">
-            <p className="text-xs font-black text-emerald-200/65">VPIP</p>
-            <p className="mt-2 text-4xl font-black text-emerald-300">
-              {stats.hands > 0 ? `${stats.vpip.toFixed(1)}%` : "—"}
-            </p>
-          </div>
-          <div className="rounded-3xl border border-amber-400/20 bg-amber-400/10 p-5">
-            <p className="text-xs font-black text-amber-200/65">PFR</p>
-            <p className="mt-2 text-4xl font-black text-amber-300">
-              {stats.hands > 0 ? `${stats.pfr.toFixed(1)}%` : "—"}
-            </p>
-          </div>
-        </section>
-
-        <section className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4 text-center">
-          <p className="text-xs font-black text-white/35">VPIP / PFR</p>
-          <p className="mt-1 text-2xl font-black">
-            {stats.hands > 0
-              ? `${stats.vpip.toFixed(1)} / ${stats.pfr.toFixed(1)}`
-              : "— / —"}
-          </p>
-        </section>
-
-        <section className="mt-6 space-y-3">
-          <ActionButton
-            label="⬜ フォールド"
-            description="ハンド数 +1 / VPIP・PFRには加算しない"
-            onClick={() => addAction("fold")}
-            className="border-slate-500/20 bg-gradient-to-br from-slate-800 to-slate-950"
-          />
-          <ActionButton
-            label="🔵 コール参加"
-            description="ハンド数 +1 / VPIP +1"
-            onClick={() => addAction("call")}
-            className="border-sky-500/30 bg-gradient-to-br from-sky-900 to-slate-950"
-          />
-          <ActionButton
-            label="🟢 レイズ参加"
-            description="ハンド数 +1 / VPIP +1 / PFR +1"
-            onClick={() => addAction("raise")}
-            className="border-emerald-500/30 bg-gradient-to-br from-emerald-900 to-slate-950"
-          />
-        </section>
-
-        {saveError && (
-          <p className="mt-4 rounded-2xl border border-red-400/20 bg-red-400/10 p-4 text-sm font-bold text-red-200">
-            {saveError}
-          </p>
-        )}
-
-        <section className="mt-5 grid grid-cols-2 gap-3">
-          <button
-            type="button"
-            onClick={undo}
-            disabled={actions.length === 0}
-            className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4 font-black text-white/65 disabled:opacity-30"
-          >
-            ↩ 1つ戻す
-          </button>
-          <button
-            type="button"
-            onClick={reset}
-            disabled={actions.length === 0}
-            className="rounded-2xl border border-red-400/20 bg-red-400/[0.06] px-4 py-4 font-black text-red-300 disabled:opacity-30"
-          >
-            リセット
-          </button>
-        </section>
-
-        <section className="mt-5 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-          <div className="grid grid-cols-3 gap-3 text-center">
-            <div>
-              <p className="text-[10px] font-black text-white/35">FOLD</p>
-              <p className="mt-1 font-black">{stats.folds}</p>
-            </div>
-            <div>
-              <p className="text-[10px] font-black text-sky-300/60">CALL</p>
-              <p className="mt-1 font-black">{stats.calls}</p>
-            </div>
-            <div>
-              <p className="text-[10px] font-black text-emerald-300/60">RAISE</p>
-              <p className="mt-1 font-black">{stats.raises}</p>
-            </div>
-          </div>
-
-          {lastAction && (
-            <p className="mt-4 text-center text-xs font-bold text-white/30">
-              最後の記録：
-              {lastAction === "fold"
-                ? "フォールド"
-                : lastAction === "call"
-                  ? "コール参加"
-                  : "レイズ参加"}
-            </p>
-          )}
-        </section>
-
-        <aside className="mt-5 rounded-2xl border border-amber-400/15 bg-amber-400/[0.05] p-4 text-xs font-medium leading-6 text-white/45">
-          VPIPはプリフロップで自発的にチップを投入した割合です。
-          コール・レイズ・3BET・4BETは参加として数えます。
-          BBで追加投資なしにチェックしてフロップを見た場合はVPIPには含めません。
-          PFRはプリフロップでレイズした割合です。
-        </aside>
-      </div>
-    </main>
-  );
+ <section className="mt-7 rounded-3xl border border-amber-400/20 bg-amber-400/5 p-5">
+ <h2 className="text-xl font-black">💰 セッション終了</h2>
+ <label className="mt-4 block"><span className="mb-2 block text-sm font-black">日付</span><input type="date" value={date} onChange={e=>setDate(e.target.value)} className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3"/></label>
+ <div className="mt-4 grid grid-cols-2 gap-3">
+ <label><span className="mb-2 block text-xs">開始額</span><input inputMode="numeric" value={start} onChange={e=>setStart(e.target.value)} placeholder="50000" className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3"/></label>
+ <label><span className="mb-2 block text-xs">終了額</span><input inputMode="numeric" value={end} onChange={e=>setEnd(e.target.value)} placeholder="63500" className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3"/></label>
+ </div>
+ <p className="my-4 text-center text-xs text-white/30">または</p>
+ <label><span className="mb-2 block text-sm font-black">収支を直接入力</span><input inputMode="numeric" value={direct} onChange={e=>setDirect(e.target.value)} placeholder="+13500 / -8000" className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3"/></label>
+ <div className="mt-4 rounded-2xl bg-black/25 p-4 text-center"><p className="text-xs text-white/35">今回の収支</p><p className={`mt-1 text-3xl font-black ${profit===null?"text-white/35":profit>=0?"text-emerald-300":"text-rose-300"}`}>{profit===null?"—":money(profit)}</p></div>
+ <button onClick={save} className="mt-4 w-full rounded-2xl bg-amber-400 p-4 font-black text-amber-950">セッションを保存</button>
+ </section>
+ {error&&<p className="mt-4 rounded-2xl bg-red-400/10 p-4 text-sm font-bold text-red-200">{error}</p>}
+ <section className="mt-7 rounded-3xl border border-cyan-400/15 bg-cyan-400/5 p-5">
+ <h2 className="text-xl font-black">📈 累計成績</h2>
+ <div className="mt-4 grid grid-cols-2 gap-3">
+ {([["セッション",t.sessions],["総ハンド数",t.hands],["VPIP",t.hands?t.vpip.toFixed(1)+"%":"—"],["PFR",t.hands?t.pfr.toFixed(1)+"%":"—"]] as const).map(([l,v])=><div key={l} className="rounded-2xl bg-black/20 p-4"><p className="text-xs text-white/35">{l}</p><p className="mt-1 text-2xl font-black">{v}</p></div>)}
+ </div>
+ <div className="mt-3 rounded-2xl bg-black/20 p-4 text-center"><p className="text-xs text-white/35">総収支</p><p className={`mt-1 text-3xl font-black ${t.profit>=0?"text-emerald-300":"text-rose-300"}`}>{money(t.profit)}</p></div>
+ </section>
+ <section className="mt-7"><h2 className="text-xl font-black">📚 セッション履歴</h2>
+ {history.length===0?<p className="mt-4 rounded-2xl border border-dashed border-white/10 p-5 text-center text-sm text-white/35">保存済みセッションはありません。</p>:<div className="mt-4 space-y-3">{history.map(x=><article key={x.id} className="rounded-2xl border border-white/10 bg-white/5 p-4"><div className="flex justify-between gap-3"><div><p className="font-black">{x.date}</p><p className="mt-1 text-xs text-white/40">{x.hands} hands · VPIP {x.vpip.toFixed(1)} / PFR {x.pfr.toFixed(1)}</p></div><p className={`font-black ${x.profit>=0?"text-emerald-300":"text-rose-300"}`}>{money(x.profit)}</p></div><div className="mt-3 flex justify-between text-xs text-white/35"><span>F {x.folds} / C {x.calls} / R {x.raises}</span><button onClick={()=>remove(x.id)} className="font-black text-red-300">削除</button></div></article>)}</div>}
+ </section>
+ </div></main>;
 }

@@ -211,12 +211,11 @@ export default function Home() {
               description="ポットオッズとエクイティを計算"
               className="border-emerald-700/70 bg-gradient-to-br from-emerald-950 to-slate-950"
             />
-
             <HomeButton
               href="/vpip"
               icon="📊"
               label="VPIP / PFR Tracker"
-              description="毎ハンド1タップで参加率を記録"
+              description="日付・収支・参加率をセッション保存"
               className="border-amber-700/70 bg-gradient-to-br from-amber-950 to-slate-950"
             />
 
