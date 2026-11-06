@@ -1,0 +1,34 @@
+Poker Read history feature verification
+
+Base: main b308dce2441bbbdaf47ce549752e2d55af02fb44
+The original source ZIP identifies the same commit. Prior review-fix ZIP was integrated first.
+
+PASS: npm ci (explicit writable temporary npm cache)
+PASS: npm test, 53 tests: 25 backup/restore, 24 review storage, 4 practice filters
+PASS: TypeScript noEmit check
+PASS: focused ESLint over all changed TS/TSX and all committed test files
+PASS: git diff --check
+PASS: production Next.js build, all 33 routes, using a non-secret build-only dummy OPENAI_API_KEY.
+      This tests build/static generation, not actual OpenAI connectivity.
+
+Ordinary npm run build without OPENAI_API_KEY: compilation and TypeScript passed,
+then existing API route initialization stopped for missing credentials.
+No production API key was read, added to files, or used. No paid AI call was made.
+
+Repository-wide lint: 18 pre-existing errors and 7 warnings in unrelated original files.
+They were not suppressed or changed as part of this feature work.
+
+Independent execution checks: 19 React/integration cases passed with synthetic storage
+and mocked AI responses. Covered cash/tournament, direct saved review access, re-review
+cancel/failure/success, storage-only retry, restoration preview/cancel/confirmation,
+corrupt files, stale data, rollback and recovery, repeat import, combined practice filters,
+no AI request during saved-review/practice reading, and byte preservation.
+
+Not run: real-browser visual/tap/mobile QA. Chromium could not start due to the execution
+environment's socket permission restriction. React execution is not equivalent to browser QA.
+Not run: real OpenAI API generation and real user-storage migration.
+
+Important safety limits: localStorage is not a cross-tab transaction. Close other Poker Read
+tabs during import. Journal space is required; capacity failures stop or roll back and do not
+clear history to free space. Recovery refuses to overwrite later external edits.
+

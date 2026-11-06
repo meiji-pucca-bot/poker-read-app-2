@@ -10,6 +10,9 @@ import {
   useState,
 } from "react";
 
+import { type StreetKey, type StreetReview } from "@/lib/hand-review-storage";
+import { useHandReview } from "@/lib/use-hand-review";
+
 type Action = {
   id?: string;
   position?: string;
@@ -62,41 +65,6 @@ type StoredHand = {
   [key: string]: unknown;
 };
 
-type StreetReview = {
-  score: number;
-  verdict: string;
-  heroAction: string;
-  recommendedAction: string;
-  goodPoints: string[];
-  improvementPoints: string[];
-  detail: string;
-};
-
-type AiReview = {
-  totalScore: number;
-  grade: string;
-  stars: number;
-  shortSummary: string;
-  strongestStreet: string;
-  mainLeak: string;
-  goodPoints: string[];
-  improvementPoints: string[];
-  streets: {
-    preflop: StreetReview;
-    flop: StreetReview;
-    turn: StreetReview;
-    river: StreetReview;
-  };
-  nextGoals: string[];
-  finalMessage: string;
-};
-
-type StreetKey =
-  | "preflop"
-  | "flop"
-  | "turn"
-  | "river";
-
 const streetNames: Record<StreetKey, string> = {
   preflop: "プリフロップ",
   flop: "フロップ",
@@ -118,49 +86,12 @@ const actionNames: Record<string, string> = {
   "All-in": "オールイン",
 };
 
-const reviewCacheKey =
-  "poker-read-ai-review-cache-v2";
-
 function readHands(): StoredHand[] {
-  const saved = localStorage.getItem(
-    "poker-read-hands",
-  );
-
-  if (!saved) {
-    return [];
-  }
-
   try {
-    const parsed = JSON.parse(saved);
-
-    return Array.isArray(parsed)
-      ? parsed
-      : [];
+    const parsed: unknown = JSON.parse(localStorage.getItem("poker-read-hands") ?? "[]");
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
-  }
-}
-
-function readReviewCache(): Record<
-  string,
-  AiReview
-> {
-  const saved =
-    localStorage.getItem(reviewCacheKey);
-
-  if (!saved) {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(saved);
-
-    return parsed &&
-      typeof parsed === "object"
-      ? parsed
-      : {};
-  } catch {
-    return {};
   }
 }
 
@@ -197,7 +128,7 @@ function actionText(action?: string) {
     return "不明";
   }
 
-  return actionNames[action] ?? action;
+  return Object.hasOwn(actionNames, action) ? actionNames[action] : action;
 }
 
 function isHeroAction(
@@ -439,7 +370,7 @@ function StreetReviewCard({
   open: boolean;
   onToggle: () => void;
 }) {
-  const style = scoreStyle(review.score);
+  const style = scoreStyle(review.score ?? 0);
 
   return (
     <article
@@ -465,7 +396,7 @@ function StreetReviewCard({
             <p
               className={`text-4xl font-black ${style.text}`}
             >
-              {review.score}
+              {review.score ?? "—"}
             </p>
 
             <p className="mt-1 text-xs text-white/40">
@@ -539,7 +470,7 @@ function StreetReviewCard({
 }
 
 function ReviewPageContent() {
-    const searchParams = useSearchParams();
+  const searchParams = useSearchParams();
   const handIdFromUrl = searchParams.get("handId");
   const [hands, setHands] =
     useState<StoredHand[]>([]);
@@ -547,42 +478,26 @@ function ReviewPageContent() {
   const [selectedIndex, setSelectedIndex] =
     useState(0);
 
-  const [review, setReview] =
-    useState<AiReview | null>(null);
-
-  const [error, setError] =
-    useState("");
-
-  const [loading, setLoading] =
-    useState(false);
-
   const [openStreet, setOpenStreet] =
     useState<StreetKey | null>(
       "preflop",
     );
 
   useEffect(() => {
-  const loadedHands = readHands();
-
-  setHands(loadedHands);
-
-  if (handIdFromUrl) {
-    const targetIndex = loadedHands.findIndex(
-      (hand) => hand.id === handIdFromUrl,
-    );
-
-    if (targetIndex >= 0) {
-      setSelectedIndex(targetIndex);
-    }
-  }
-}, [handIdFromUrl]);
+    const loadedHands = readHands();
+    // Load browser-only history after hydration; never rewrite existing hand records.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHands(loadedHands);
+    setSelectedIndex(handIdFromUrl
+      ? loadedHands.findIndex((hand) => hand.id === handIdFromUrl)
+      : 0);
+  }, [handIdFromUrl]);
 
   const selectedHand =
     hands[selectedIndex];
 
-  const selectedHandId =
-    selectedHand?.id ??
-    `hand-${selectedIndex}`;
+  const { review, saved, error, saveError, loading, generateReview, retrySave, deleteCachedReview } =
+    useHandReview("cash", selectedHand);
 
   const actionGroups = useMemo(
     () => [
@@ -613,100 +528,6 @@ function ReviewPageContent() {
     ],
     [selectedHand],
   );
-
-  useEffect(() => {
-    if (!selectedHand) {
-      return;
-    }
-
-    const cache = readReviewCache();
-    setReview(
-      cache[selectedHandId] ?? null,
-    );
-  }, [selectedHand, selectedHandId]);
-
-  async function generateReview() {
-    if (!selectedHand) {
-      setError(
-        "レビューするハンドがありません。",
-      );
-      return;
-    }
-
-    setLoading(true);
-    setError("");
-    setOpenStreet("preflop");
-
-    try {
-      const response = await fetch(
-        "/api/review",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-          body: JSON.stringify({
-            hand: selectedHand,
-          }),
-        },
-      );
-
-      const data =
-        (await response.json()) as {
-          review?: AiReview;
-          error?: string;
-        };
-
-      if (!response.ok) {
-        throw new Error(
-          data.error ||
-            "AIレビューを生成できませんでした。",
-        );
-      }
-
-      if (!data.review) {
-        throw new Error(
-          "AIレビューを取得できませんでした。",
-        );
-      }
-
-      setReview(data.review);
-
-      const cache =
-        readReviewCache();
-
-      cache[selectedHandId] =
-        data.review;
-
-      localStorage.setItem(
-        reviewCacheKey,
-        JSON.stringify(cache),
-      );
-    } catch (caughtError) {
-      setError(
-        caughtError instanceof Error
-          ? caughtError.message
-          : "AIレビューを生成できませんでした。",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function deleteCachedReview() {
-    const cache = readReviewCache();
-
-    delete cache[selectedHandId];
-
-    localStorage.setItem(
-      reviewCacheKey,
-      JSON.stringify(cache),
-    );
-
-    setReview(null);
-    setError("");
-  }
 
   return (
     <main className="min-h-screen bg-[#07150f] px-4 pb-[calc(env(safe-area-inset-bottom)+28px)] pt-[calc(env(safe-area-inset-top)+28px)] text-white">
@@ -781,16 +602,17 @@ function ReviewPageContent() {
               <select
                 id="hand-select"
                 value={selectedIndex}
+                disabled={loading}
                 onChange={(event) => {
                   setSelectedIndex(
                     Number(
                       event.target.value,
                     ),
                   );
-                  setError("");
                 }}
                 className="mt-3 w-full rounded-2xl border border-white/10 bg-black/30 p-4"
               >
+                {!selectedHand && <option value={-1}>指定されたハンドが見つかりません</option>}
                 {hands.map(
                   (hand, index) => (
                     <option
@@ -844,8 +666,8 @@ function ReviewPageContent() {
 
             <button
               type="button"
-              onClick={generateReview}
-              disabled={loading}
+              onClick={() => { setOpenStreet("preflop"); void generateReview(); }}
+              disabled={loading || !selectedHand}
               className="mt-4 w-full rounded-3xl bg-gradient-to-r from-emerald-400 to-lime-300 p-5 text-lg font-black text-slate-950 shadow-lg shadow-emerald-950/50 disabled:bg-slate-700"
             >
               {loading
@@ -855,10 +677,23 @@ function ReviewPageContent() {
                   : "AIレビューを生成"}
             </button>
 
-            {review && (
+            {review && saved && (
               <p className="mt-2 text-center text-xs text-white/40">
-                保存済みレビューは再課金なしで表示されます。
+                保存済みレビューを表示中です。表示だけではAIを呼び出しません。
               </p>
+            )}
+
+            {review?.legacy && (
+              <p className="mt-2 text-sm text-amber-200">旧形式の保存済みレビューです。記録のない項目は「記録なし」と表示します。</p>
+            )}
+
+            {saveError && (
+              <section role="alert" className="mt-4 rounded-2xl border border-amber-700 bg-amber-950/40 p-4 text-sm text-amber-100">
+                <p>{saveError}</p>
+                <button type="button" onClick={retrySave} disabled={loading} className="mt-3 w-full rounded-xl bg-amber-300 p-3 font-bold text-amber-950 disabled:opacity-50">
+                  保存だけ再試行（AIを呼び出しません）
+                </button>
+              </section>
             )}
 
             {loading && (
@@ -1047,9 +882,8 @@ function ReviewPageContent() {
 
                 <button
                   type="button"
-                  onClick={
-                    deleteCachedReview
-                  }
+                  onClick={deleteCachedReview}
+                  disabled={loading}
                   className="mt-4 w-full rounded-2xl border border-red-900 p-4 text-sm font-bold text-red-300"
                 >
                   保存済みAIレビューを削除

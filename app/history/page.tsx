@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { type AiReview, readReviewCache, deleteReview, clearReviewCache, REVIEW_UPDATED_EVENT } from "@/lib/hand-review-storage";
+
 type ResultFilter = "all" | "win" | "lose" | "chop";
 type ReviewFilter = "all" | "reviewed" | "unreviewed";
 type FavoriteFilter = "all" | "favorites";
-type SortType = "newest" | "oldest" | "scoreHigh" | "importanceHigh";
+type SortType = "newest" | "oldest" | "scoreHigh" | "scoreLow" | "importanceHigh";
 
 type Card = {
   rank?: string;
@@ -92,13 +94,6 @@ type StoredHand = {
   };
 };
 
-type CachedReview = {
-  totalScore?: number;
-  grade?: string;
-  stars?: number;
-};
-
-const reviewCacheKey = "poker-read-ai-review-cache";
 const favoriteStorageKey = "poker-read-favorite-hands";
 
 const resultFilters: { key: ResultFilter; label: string }[] = [
@@ -109,9 +104,9 @@ const resultFilters: { key: ResultFilter; label: string }[] = [
 ];
 
 function safeParseHands(): StoredHand[] {
-  const saved = localStorage.getItem("poker-read-hands");
-  if (!saved) return [];
   try {
+    const saved = localStorage.getItem("poker-read-hands");
+    if (!saved) return [];
     const parsed = JSON.parse(saved);
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -119,23 +114,10 @@ function safeParseHands(): StoredHand[] {
   }
 }
 
-function safeParseReviewCache(): Record<string, CachedReview> {
-  const saved = localStorage.getItem(reviewCacheKey);
-  if (!saved) return {};
-  try {
-    const parsed = JSON.parse(saved);
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-
-
 function safeParseFavorites(): string[] {
-  const saved = localStorage.getItem(favoriteStorageKey);
-  if (!saved) return [];
   try {
+    const saved = localStorage.getItem(favoriteStorageKey);
+    if (!saved) return [];
     const parsed = JSON.parse(saved);
     return Array.isArray(parsed)
       ? parsed.filter((value): value is string => typeof value === "string")
@@ -187,7 +169,7 @@ function actionJapanese(action?: string) {
     Raise: "レイズ",
     "All-in": "オールイン",
   };
-  return action ? labels[action] ?? action : "不明";
+  return action ? (Object.hasOwn(labels, action) ? labels[action] : action) : "不明";
 }
 
 function resultStyle(type?: string) {
@@ -332,7 +314,7 @@ function StreetSummary({
 
 export default function HistoryPage() {
   const [hands, setHands] = useState<StoredHand[]>([]);
-  const [reviewCache, setReviewCache] = useState<Record<string, CachedReview>>({});
+  const [reviewCache, setReviewCache] = useState<Record<string, AiReview>>({});
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [openHandId, setOpenHandId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -342,12 +324,28 @@ export default function HistoryPage() {
   const [positionFilter, setPositionFilter] = useState("all");
   const [sortType, setSortType] = useState<SortType>("newest");
   const [loaded, setLoaded] = useState(false);
+  const [storageWarning, setStorageWarning] = useState("");
 
   useEffect(() => {
-    setHands(safeParseHands());
-    setReviewCache(safeParseReviewCache());
-    setFavoriteIds(safeParseFavorites());
-    setLoaded(true);
+    function refresh() {
+      setHands(safeParseHands());
+      const { reviews, warning } = readReviewCache("cash");
+      setReviewCache(reviews);
+      setStorageWarning(warning);
+      setFavoriteIds(safeParseFavorites());
+      setLoaded(true);
+    }
+    refresh();
+    window.addEventListener("focus", refresh);
+    window.addEventListener("pageshow", refresh);
+    window.addEventListener("storage", refresh);
+    window.addEventListener(REVIEW_UPDATED_EVENT, refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("pageshow", refresh);
+      window.removeEventListener("storage", refresh);
+      window.removeEventListener(REVIEW_UPDATED_EVENT, refresh);
+    };
   }, []);
 
   const positions = useMemo(
@@ -405,6 +403,10 @@ export default function HistoryPage() {
     return [...matchedHands].sort((a, b) => {
       if (sortType === "oldest") {
         return new Date(a.savedAt).getTime() - new Date(b.savedAt).getTime();
+      }
+
+      if (sortType === "scoreLow") {
+        return (reviewCache[a.id]?.totalScore ?? Infinity) - (reviewCache[b.id]?.totalScore ?? Infinity);
       }
 
       if (sortType === "scoreHigh") {
@@ -469,33 +471,41 @@ export default function HistoryPage() {
   function deleteHand(handId: string) {
     if (!window.confirm("このハンドを削除しますか？")) return;
 
-    const nextHands = hands.filter((hand) => hand.id !== handId);
-    setHands(nextHands);
-    localStorage.setItem("poker-read-hands", JSON.stringify(nextHands));
+    try {
+      // Read the latest values, preserving records added since this page was opened.
+      const latestHands: unknown = JSON.parse(localStorage.getItem("poker-read-hands") ?? "[]");
+      const latestFavorites: unknown = JSON.parse(localStorage.getItem(favoriteStorageKey) ?? "[]");
+      if (!Array.isArray(latestHands) || !Array.isArray(latestFavorites)) throw new Error("Invalid saved history");
+      const nextHands = latestHands.filter((hand) => !hand || typeof hand !== "object" || hand.id !== handId);
+      const nextFavoriteIds = latestFavorites.filter((id) => id !== handId);
 
-    const nextCache = { ...reviewCache };
-    delete nextCache[handId];
-    setReviewCache(nextCache);
-    localStorage.setItem(reviewCacheKey, JSON.stringify(nextCache));
-
-    const nextFavoriteIds = favoriteIds.filter((id) => id !== handId);
-    setFavoriteIds(nextFavoriteIds);
-    localStorage.setItem(favoriteStorageKey, JSON.stringify(nextFavoriteIds));
-
-    if (openHandId === handId) setOpenHandId(null);
+      deleteReview("cash", handId);
+      localStorage.setItem("poker-read-hands", JSON.stringify(nextHands));
+      localStorage.setItem(favoriteStorageKey, JSON.stringify(nextFavoriteIds));
+      setHands(nextHands);
+      setFavoriteIds(nextFavoriteIds);
+      setReviewCache(readReviewCache("cash").reviews);
+      if (openHandId === handId) setOpenHandId(null);
+    } catch {
+      setStorageWarning("削除処理を完了できませんでした。ページを開き直して保存状態を確認してください。");
+    }
   }
 
   function deleteAllHands() {
     if (!window.confirm("保存したハンドをすべて削除しますか？この操作は元に戻せません。")) {
       return;
     }
-    localStorage.removeItem("poker-read-hands");
-    localStorage.removeItem(reviewCacheKey);
-    localStorage.removeItem(favoriteStorageKey);
-    setHands([]);
-    setReviewCache({});
-    setFavoriteIds([]);
-    setOpenHandId(null);
+    try {
+      localStorage.removeItem("poker-read-hands");
+      clearReviewCache("cash");
+      localStorage.removeItem(favoriteStorageKey);
+      setHands([]);
+      setReviewCache({});
+      setFavoriteIds([]);
+      setOpenHandId(null);
+    } catch {
+      setStorageWarning("削除処理を完了できませんでした。ページを開き直して保存状態を確認してください。");
+    }
   }
 
   if (!loaded) {
@@ -522,6 +532,13 @@ export default function HistoryPage() {
             保存したハンドを検索・絞り込みして、いつでも復習できます。
           </p>
         </header>
+
+        <nav aria-label="履歴ツール" className="mb-5 grid grid-cols-2 gap-3">
+          <Link href="/backup" className="flex min-h-12 items-center justify-center rounded-2xl border border-sky-800 bg-sky-950/40 px-3 py-3 text-center text-sm font-bold text-sky-200">バックアップ・復元</Link>
+          <Link href="/practice" className="flex min-h-12 items-center justify-center rounded-2xl border border-amber-800 bg-amber-950/40 px-3 py-3 text-center text-sm font-bold text-amber-200">苦手なプレーを復習</Link>
+        </nav>
+
+        {storageWarning && <p role="alert" className="mb-4 rounded-2xl border border-amber-700 p-4 text-sm text-amber-200">{storageWarning}</p>}
 
         <section className="grid grid-cols-2 gap-3">
           <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
@@ -655,6 +672,7 @@ export default function HistoryPage() {
                 <option value="newest">新しい順</option>
                 <option value="oldest">古い順</option>
                 <option value="scoreHigh">AI評価が高い順</option>
+                <option value="scoreLow">AI評価が低い順（復習向け）</option>
                 <option value="importanceHigh">重要度が高い順</option>
               </select>
             </div>
@@ -695,7 +713,7 @@ export default function HistoryPage() {
             {filteredHands.map((hand) => {
               const style = resultStyle(hand.result?.type);
               const isOpen = openHandId === hand.id;
-              const importance = hand.result?.importance ?? 1;
+              const importance = Number.isFinite(hand.result?.importance) ? Math.max(0, Math.min(5, Math.round(hand.result!.importance!))) : 1;
               const villains = getVillains(hand);
               const showdownPlayers = getShowdownPlayers(hand);
               const cachedReview = reviewCache[hand.id];
@@ -712,11 +730,7 @@ export default function HistoryPage() {
                   key={hand.id}
                   className={`overflow-hidden rounded-[28px] border border-white/10 bg-gradient-to-br from-[#10271c] to-[#08130e] shadow-xl ${style.glow}`}
                 >
-                  <button
-                    type="button"
-                    onClick={() => setOpenHandId(isOpen ? null : hand.id)}
-                    className="w-full p-5 text-left"
-                  >
+                  <div className="p-5">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="flex items-center gap-2">
@@ -768,7 +782,7 @@ export default function HistoryPage() {
 
                       {cachedReview ? (
                         <span className="rounded-full border border-amber-700 bg-amber-300 px-3 py-1 text-xs font-black text-amber-950">
-                          🤖 {cachedReview.totalScore ?? "-"}点 {cachedReview.grade ?? ""}
+                          🤖 AIレビュー済み · {cachedReview.totalScore ?? "-"}点 {cachedReview.grade ?? ""}
                         </span>
                       ) : (
                         <span className="rounded-full border border-sky-800 bg-sky-950/40 px-3 py-1 text-xs font-black text-sky-300">
@@ -784,13 +798,20 @@ export default function HistoryPage() {
                       </div>
                     )}
 
-                    <div className="mt-4 flex items-center justify-between">
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                       <p className="text-xs text-white/35">{formatDate(hand.savedAt)}</p>
-                      <p className="text-sm font-black text-emerald-300">
+                      <button type="button" aria-expanded={isOpen} onClick={() => setOpenHandId(isOpen ? null : hand.id)} className="min-h-11 rounded-xl px-2 text-sm font-black text-emerald-300">
                         {isOpen ? "詳細を閉じる ▲" : "詳細を見る ▼"}
-                      </p>
+                      </button>
                     </div>
-                  </button>
+                    {cachedReview && (
+                      <div className="mt-3 rounded-2xl border border-amber-800/60 bg-amber-950/20 p-4">
+                        <p className="text-xs text-amber-200/70">レビュー日：{cachedReview.reviewedAt ? formatDate(cachedReview.reviewedAt) : "記録なし（旧レビュー）"}</p>
+                        <p className="mt-2 break-words text-sm leading-6 text-white/85">{cachedReview.shortSummary || "このレビューには要約が保存されていません。"}</p>
+                        <Link href={`/review?handId=${encodeURIComponent(hand.id)}`} className="mt-3 flex min-h-11 items-center justify-center rounded-xl bg-amber-300 px-3 py-2 text-sm font-black text-amber-950">保存済みレビューを開く</Link>
+                      </div>
+                    )}
+                  </div>
 
                   {isOpen && (
                     <div className="space-y-4 border-t border-white/10 p-5">
