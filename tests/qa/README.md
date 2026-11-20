@@ -19,11 +19,11 @@ The only extra direct dependencies are React 19.2.4 and react-test-renderer 19.2
 
 ## Coverage and results
 
-- 8 review/history cases across cash and tournament: byte-preserving loads, review dates and legacy date labels, encoded direct links, exact selected IDs, no API on reopen, no nested buttons, re-review cancel/failure/success, save-only retry after quota failure.
+- 10 review/history cases across cash and tournament: byte-preserving loads, review dates and legacy date labels, encoded direct links, exact selected IDs, no API on reopen, no nested buttons, re-review cancel/failure/success, save-only retry after quota failure, manual review editing, cancel, draft retention on failed save, reload, and explicit warning before replacing manual edits with AI.
 - 9 backup/practice cases: corrupted data rejection, legacy/current conflicts and stable duplicates, rollback journal recovery, stale preview, cancel/declined confirm/invalid file selection, restore/repeat, recovery UI, learning filters/sorts/links/reset, corrupt-mode handling.
 - 2 adversarial rendering cases: inherited object-property action names and invalid pre-existing importance values stay renderable without rewriting saved bytes.
 
-All 19 cases passed during review. Result JSON files are written to the operating system's temporary directory with names beginning `poker-read-`. React prints its normal deprecation warning for react-test-renderer.
+The scripts report each case individually. Result JSON files are written to the operating system's temporary directory with names beginning `poker-read-`. React prints its normal deprecation warning for react-test-renderer.
 
 ## Verification limits
 

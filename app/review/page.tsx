@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import { type StreetKey, type StreetReview } from "@/lib/hand-review-storage";
+import { HandReviewEditor } from "@/components/HandReviewEditor";
 import { useHandReview } from "@/lib/use-hand-review";
 
 type Action = {
@@ -496,7 +497,9 @@ function ReviewPageContent() {
   const selectedHand =
     hands[selectedIndex];
 
-  const { review, saved, error, saveError, loading, generateReview, retrySave, deleteCachedReview } =
+  const [editHandId, setEditHandId] = useState("");
+  const editing = Boolean(editHandId && editHandId === selectedHand?.id);
+  const { review, saved, error, saveError, loading, generateReview, retrySave, deleteCachedReview, saveManualEdit } =
     useHandReview("cash", selectedHand);
 
   const actionGroups = useMemo(
@@ -602,7 +605,7 @@ function ReviewPageContent() {
               <select
                 id="hand-select"
                 value={selectedIndex}
-                disabled={loading}
+                disabled={loading || editing}
                 onChange={(event) => {
                   setSelectedIndex(
                     Number(
@@ -667,7 +670,7 @@ function ReviewPageContent() {
             <button
               type="button"
               onClick={() => { setOpenStreet("preflop"); void generateReview(); }}
-              disabled={loading || !selectedHand}
+              disabled={loading || !selectedHand || editing}
               className="mt-4 w-full rounded-3xl bg-gradient-to-r from-emerald-400 to-lime-300 p-5 text-lg font-black text-slate-950 shadow-lg shadow-emerald-950/50 disabled:bg-slate-700"
             >
               {loading
@@ -678,9 +681,19 @@ function ReviewPageContent() {
             </button>
 
             {review && saved && (
-              <p className="mt-2 text-center text-xs text-white/40">
-                保存済みレビューを表示中です。表示だけではAIを呼び出しません。
-              </p>
+              editing ? (
+                <HandReviewEditor key={editHandId} review={review} onSave={saveManualEdit} onClose={() => setEditHandId("")} />
+              ) : (
+                <>
+                  <p className="mt-2 text-center text-xs text-white/55">
+                    {review.manualEditedAt ? "手動で修正したレビューを表示中です。" : "保存済みレビューを表示中です。表示だけではAIを呼び出しません。"}
+                  </p>
+                  <button type="button" onClick={() => setEditHandId(selectedHand?.id ?? "")} disabled={loading || !selectedHand?.id}
+                    className="mt-4 w-full rounded-2xl border border-emerald-500/60 p-4 text-sm font-bold text-emerald-200 disabled:opacity-50">
+                    保存済みレビューを編集
+                  </button>
+                </>
+              )
             )}
 
             {review?.legacy && (
@@ -712,7 +725,7 @@ function ReviewPageContent() {
               </p>
             )}
 
-            {review && (
+            {review && !editing && (
               <>
                 <section className="mt-5 rounded-[32px] border border-amber-700 bg-gradient-to-br from-amber-950 via-slate-950 to-emerald-950 p-6 shadow-xl">
                   <p className="text-center text-xs font-black tracking-[0.2em] text-amber-300">

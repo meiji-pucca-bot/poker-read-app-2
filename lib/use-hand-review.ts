@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  type AiReview, type ReviewMode, deleteReview, normalizeSavedReview, readReviewCache, saveReview,
+  type AiReview, type ReviewMode, type ReviewTextEdits, deleteReview, editSavedReview, normalizeSavedReview, readReviewCache, saveReview,
 } from "@/lib/hand-review-storage";
 
 type ReviewState = { handId: string; review: AiReview | null; raw?: unknown; saved: boolean };
@@ -50,7 +50,9 @@ export function useHandReview(mode: ReviewMode, hand?: { id?: string; [key: stri
       return;
     }
     if (state.handId === handId && state.review &&
-      !window.confirm("AIレビューを再生成しますか？追加のAPI利用料が発生する場合があります。成功して保存できるまで、以前の保存済みレビューは残します。")) return;
+      !window.confirm(state.review.manualEditedAt
+        ? "再生成に成功すると、手動で修正した内容は新しいAIレビューに置き換わります。追加のAPI利用料が発生する場合があります。再生成しますか？"
+        : "AIレビューを再生成しますか？追加のAPI利用料が発生する場合があります。成功して保存できるまで、以前の保存済みレビューは残します。")) return;
 
     const requestId = handId;
     inFlight.current = true;
@@ -93,9 +95,18 @@ export function useHandReview(mode: ReviewMode, hand?: { id?: string; [key: stri
     }
   }
 
+  function saveManualEdit(base: AiReview, edits: ReviewTextEdits) {
+    if (!handId || currentId.current !== handId || inFlight.current || !state.saved || state.handId !== handId) {
+      throw new Error("このハンドのレビューは現在保存できません。");
+    }
+    const edited = editSavedReview(mode, handId, base, edits);
+    setState({ handId, review: edited, saved: true });
+    setSaveError("");
+  }
+
   return {
     review: state.handId === handId ? state.review : null,
     saved: state.handId === handId && state.saved,
-    error, saveError, loading, generateReview, retrySave, deleteCachedReview,
+    error, saveError, loading, generateReview, retrySave, deleteCachedReview, saveManualEdit,
   };
 }

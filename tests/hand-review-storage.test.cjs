@@ -13,7 +13,7 @@ const compiled = ts.transpileModule(fs.readFileSync(filename, "utf8"), {
 }).outputText;
 const loaded = new Module(filename, module);
 loaded._compile(compiled, filename);
-const { readReviewCache, saveReview, deleteReview, clearReviewCache, reviewCacheKeys, normalizeSavedReview } = loaded.exports;
+const { readReviewCache, saveReview, editSavedReview, deleteReview, clearReviewCache, reviewCacheKeys, normalizeSavedReview } = loaded.exports;
 
 class MemoryStorage {
   constructor(entries = {}) { this.data = new Map(Object.entries(entries)); this.writes = []; }
@@ -159,3 +159,52 @@ test('new saves record a valid review date, legacy dates are never invented', ()
   assert.equal(normalizeSavedReview({ totalScore: 50, reviewedAt: 'invalid' }).reviewedAt, undefined);
   assert.equal(normalizeSavedReview({ totalScore: 50 }).reviewedAt, undefined);
 });
+
+for (const mode of ["cash", "tournament"]) {
+  const { legacy, current } = reviewCacheKeys(mode);
+  test(`${mode}: editing text keeps scores, date, metadata and unrelated entries`, () => {
+    const original = { ...review(), reviewedAt: "2026-11-06T01:02:03Z", extra: { keep: true } };
+    original.streets.flop = { ...original.streets.flop, extraStreet: "keep" };
+    const other = review(71);
+    const storage = new MemoryStorage({ [legacy]: JSON.stringify({ A: review(55) }), [current]: JSON.stringify({ A: original, B: other }), hands: "[1,2,3]" });
+    const base = readReviewCache(mode, storage).reviews.A;
+    const result = editSavedReview(mode, "A", base, { shortSummary: "修正", goodPoints: [], streets: { flop: { detail: "修正したフロップ説明" } } }, storage);
+    const contents = JSON.parse(storage.getItem(current));
+    assert.equal(result.shortSummary, "修正");
+    assert.deepEqual(result.goodPoints, []);
+    assert.equal(result.totalScore, 80);
+    assert.ok(result.manualEditedAt);
+    assert.equal(result.reviewedAt, original.reviewedAt);
+    assert.deepEqual(contents.A.extra, original.extra);
+    assert.equal(contents.A.streets.flop.score, original.streets.flop.score);
+    assert.equal(contents.A.streets.flop.detail, "修正したフロップ説明");
+    assert.equal(contents.A.streets.flop.extraStreet, "keep");
+    assert.deepEqual(contents.A.streets.turn, original.streets.turn);
+    assert.deepEqual(contents.B, other);
+    assert.deepEqual(storage.writes, [current]);
+    assert.deepEqual(readReviewCache(mode, storage).reviews.A, result);
+  });
+  test(`${mode}: legacy editing keeps original bytes and does not invent a generated date`, () => {
+    const old = JSON.stringify({ A: { totalScore: 60, summary: "old", extra: true } });
+    const storage = new MemoryStorage({ [legacy]: old });
+    const base = readReviewCache(mode, storage).reviews.A;
+    const result = editSavedReview(mode, "A", base, { shortSummary: "新しい文" }, storage);
+    assert.equal(storage.getItem(legacy), old);
+    assert.equal(result.shortSummary, "新しい文");
+    assert.equal(result.reviewedAt, undefined);
+    assert.equal(result.legacy, true);
+    assert.equal(JSON.parse(storage.getItem(current)).A.extra, true);
+  });
+  test(`${mode}: stale edit and failed write leave the latest saved review intact`, () => {
+    const storage = new MemoryStorage({ [current]: JSON.stringify({ A: review(80) }) });
+    const base = readReviewCache(mode, storage).reviews.A;
+    const changed = JSON.stringify({ A: review(90) });
+    storage.setItem(current, changed);
+    assert.throws(() => editSavedReview(mode, "A", base, { shortSummary: "stale" }, storage), /保存済みレビューが変わりました/);
+    assert.equal(storage.getItem(current), changed);
+    const updated = readReviewCache(mode, storage).reviews.A;
+    storage.setItem = () => { throw new Error("QuotaExceededError"); };
+    assert.throws(() => editSavedReview(mode, "A", updated, { shortSummary: "unsaved" }, storage), /QuotaExceededError/);
+    assert.equal(storage.getItem(current), changed);
+  });
+}

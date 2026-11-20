@@ -12,6 +12,7 @@ export type StreetReview = {
 };
 export type AiReview = {
   reviewedAt?: string;
+  manualEditedAt?: string;
   totalScore: number;
   grade: string;
   stars: number;
@@ -24,6 +25,11 @@ export type AiReview = {
   nextGoals: string[];
   finalMessage: string;
   legacy?: boolean;
+};
+type ReviewTextKeys = "shortSummary" | "strongestStreet" | "mainLeak" | "goodPoints" | "improvementPoints" | "nextGoals" | "finalMessage";
+export type StreetTextEdits = Partial<Omit<StreetReview, "score">>;
+export type ReviewTextEdits = Partial<Pick<AiReview, ReviewTextKeys>> & {
+  streets?: Partial<Record<StreetKey, StreetTextEdits>>;
 };
 type ReviewStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 const streetKeys: StreetKey[] = ["preflop", "flop", "turn", "river"];
@@ -71,6 +77,7 @@ export function normalizeSavedReview(value: unknown): AiReview | null {
   }
   return {
     reviewedAt: typeof value.reviewedAt === "string" && Number.isFinite(Date.parse(value.reviewedAt)) ? value.reviewedAt : undefined,
+    manualEditedAt: typeof value.manualEditedAt === "string" && Number.isFinite(Date.parse(value.manualEditedAt)) ? value.manualEditedAt : undefined,
     totalScore,
     grade: text(value.grade, totalScore >= 90 ? "S" : totalScore >= 80 ? "A" : totalScore >= 70 ? "B" : totalScore >= 60 ? "C" : "D"),
     stars: typeof value.stars === "number" && Number.isFinite(value.stars)
@@ -126,6 +133,49 @@ export function saveReview(mode: ReviewMode, handId: string, review: unknown, su
   const cache = readRaw(storage, current);
   storage.setItem(current, JSON.stringify({ ...cache, [handId]: { ...(review as Record<string, unknown>), reviewedAt: new Date().toISOString() } }));
   notifyUpdated();
+}
+
+/** Update only the review text, keeping AI scores, generation time, raw metadata and other hands. */
+export function editSavedReview(mode: ReviewMode, handId: string, base: AiReview, edits: ReviewTextEdits, suppliedStorage?: ReviewStorage): AiReview {
+  const storage = suppliedStorage ?? window.localStorage;
+  const { current, legacy } = reviewCacheKeys(mode);
+  const cache = readRaw(storage, current);
+  const candidate = Object.hasOwn(cache, handId) ? cache[handId] : undefined;
+  const raw = normalizeSavedReview(candidate) ? candidate : (() => {
+    const legacyCache = readRaw(storage, legacy);
+    return Object.hasOwn(legacyCache, handId) ? legacyCache[handId] : undefined;
+  })();
+  const latest = normalizeSavedReview(raw);
+  if (!handId || !isRecord(raw) || !latest || JSON.stringify(latest) !== JSON.stringify(base)) {
+    throw new Error("保存済みレビューが変わりました。下書きを控えてから、画面を開き直してください。");
+  }
+  const { streets, ...fields } = edits;
+  const updated = { ...raw };
+  const fieldsToUpdate = ["shortSummary", "strongestStreet", "mainLeak", "goodPoints", "improvementPoints", "nextGoals", "finalMessage"] as const;
+  for (const field of fieldsToUpdate) {
+    if (fields[field] !== undefined) updated[field] = fields[field];
+  }
+  if (streets) {
+    const source = isRecord(raw.streets) ? raw.streets : {};
+    const next = { ...source };
+    for (const key of streetKeys) {
+      const edited = streets[key];
+      if (!edited) continue;
+      const oldStreet = source[key];
+      const changed = { ...(isRecord(oldStreet) ? oldStreet : {}) };
+      for (const field of ["verdict", "heroAction", "recommendedAction", "goodPoints", "improvementPoints", "detail"] as const) {
+        if (edited[field] !== undefined) changed[field] = edited[field];
+      }
+      next[key] = changed;
+    }
+    updated.streets = next;
+  }
+  updated.manualEditedAt = new Date().toISOString();
+  const result = normalizeSavedReview(updated);
+  if (!result) throw new Error("レビューの内容を確認できませんでした。");
+  storage.setItem(current, JSON.stringify({ ...cache, [handId]: updated }));
+  notifyUpdated();
+  return result;
 }
 
 export function deleteReview(mode: ReviewMode, handId: string, suppliedStorage?: ReviewStorage) {
